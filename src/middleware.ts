@@ -10,6 +10,11 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession();
 
+  // Allow access to API routes
+  if (req.nextUrl.pathname.startsWith('/api/')) {
+    return res;
+  }
+
   if (!session && req.nextUrl.pathname !== '/auth/login') {
     return NextResponse.redirect(new URL('/auth/login', req.url));
   }
@@ -22,5 +27,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 }; 
