@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { ApiKey, VisibleKeys } from '@/types/api';
 import { apiKeyService } from '@/services/apiKeyService';
@@ -13,6 +13,11 @@ export function useApiKeys() {
 
   const fetchApiKeys = async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user?.id) {
+        return; // Exit early if no authenticated user
+      }
+
       const data = await apiKeyService.fetchApiKeys();
       setApiKeys(data || []);
     } catch (error) {
@@ -32,9 +37,9 @@ export function useApiKeys() {
       await apiKeyService.createApiKey(session.user.id, data);
       toast.success('API key created successfully');
       await fetchApiKeys();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error creating API key:', error);
-      toast.error(error.message || 'Failed to create API key');
+      toast.error('Failed to create API key');
     } finally {
       setIsLoading(false);
     }

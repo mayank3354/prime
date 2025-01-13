@@ -30,21 +30,17 @@ export default function Dashboard() {
   } = useApiKeys();
 
   useEffect(() => {
-    checkUser();
-    fetchApiKeys();
-  }, []);
-
-  const checkUser = async () => {
-    try {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error || !session) {
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         router.push('/auth/login');
+        return;
       }
-    } catch (error) {
-      console.error('Error checking user session:', error);
-      router.push('/auth/login');
-    }
-  };
+      fetchApiKeys();
+    };
+
+    init();
+  }, [router, supabase.auth, fetchApiKeys]);
 
   const handleCreateKey = async (data: { name: string; limit: number; monthlyLimit: boolean }) => {
     await createApiKey(data);
@@ -69,7 +65,7 @@ export default function Dashboard() {
     try {
       await navigator.clipboard.writeText(text);
       toast.success('API key copied to clipboard');
-    } catch (error) {
+    } catch  {
       toast.error('Failed to copy API key');
     }
   };

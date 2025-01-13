@@ -25,7 +25,7 @@ export async function POST(request: Request) {
       { message: 'Valid API key' },
       { status: 200 }
     );
-  } catch (error) {
+  } catch  {
     return NextResponse.json(
       { message: 'Failed to validate API key' },
       { status: 500 }

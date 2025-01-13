@@ -6,7 +6,7 @@ import { AuthError } from '@supabase/supabase-js';
 import Link from 'next/link';
 import Image from 'next/image';
 
-export default function LoginPage() {
+export default function SignUpPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -14,47 +14,30 @@ export default function LoginPage() {
   const router = useRouter();
   const supabase = createClientComponentClient();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
-      });
-
-      if (error) throw error;
-
-      if (data?.session) {
-        router.push('/dashboard');
-        router.refresh();
-      }
-    } catch (error) {
-      setError(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       });
 
       if (error) throw error;
+
+      if (data) {
+        router.push('/auth/verify-email');
+      }
     } catch (error: Error | AuthError) {
       setError(error.message);
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const handleSignupNavigation = () => {
-    router.push('/auth/signup');
   };
 
   return (
@@ -62,16 +45,16 @@ export default function LoginPage() {
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
-            Sign in to your account
+            Create your account
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
             Or{' '}
-            <button
-              onClick={handleSignupNavigation}
+            <Link
+              href="/auth/login"
               className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300"
             >
-              create a new account
-            </button>
+              sign in to your account
+            </Link>
           </p>
         </div>
 
@@ -81,7 +64,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
+        <form className="mt-8 space-y-6" onSubmit={handleSignUp}>
           <div className="rounded-md shadow-sm space-y-4">
             <div>
               <label htmlFor="email" className="sr-only">
@@ -107,7 +90,7 @@ export default function LoginPage() {
                 id="password"
                 name="password"
                 type="password"
-                autoComplete="current-password"
+                autoComplete="new-password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -117,56 +100,16 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="text-sm">
-              <Link
-                href="/auth/forgot-password"
-                className="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300"
-              >
-                Forgot your password?
-              </Link>
-            </div>
-          </div>
-
           <div>
             <button
               type="submit"
               disabled={loading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? 'Creating account...' : 'Create account'}
             </button>
           </div>
         </form>
-
-        <div className="mt-6">
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-300 dark:border-gray-600" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
-                Or continue with
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <button
-              onClick={handleGoogleLogin}
-              className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
-            >
-              <Image
-                src="/google.svg"
-                alt="Google"
-                width={20}
-                height={20}
-                className="mr-2"
-              />
-              Sign in with Google
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

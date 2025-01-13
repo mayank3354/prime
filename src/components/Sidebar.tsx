@@ -1,11 +1,36 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 const Sidebar = () => {
   const pathname = usePathname();
+  const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [userName, setUserName] = useState<string>('');
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) {
+        setUserName(user.email.split('@')[0]);
+      }
+    };
+    getUser();
+  }, [supabase.auth]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/auth/login');
+    router.refresh();
+  };
+
+  // Don't render sidebar on auth pages
+  if (pathname.startsWith('/auth/')) {
+    return null;
+  }
 
   const navItems = [
     { icon: '🏠', label: 'Overview', href: '/dashboard' },
@@ -96,29 +121,23 @@ const Sidebar = () => {
           ))}
         </nav>
 
-        {/* User Profile */}
+        {/* User Profile - Updated Section */}
         <div className="absolute bottom-0 w-full p-4 border-t border-gray-200 dark:border-gray-800">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700"></div>
+            <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white">
+              {userName.charAt(0).toUpperCase()}
+            </div>
             <div className={`flex-1 transition-all duration-300 ${
               isCollapsed ? 'opacity-0 w-0' : 'opacity-100 w-auto'
             }`}>
-              <p className="text-sm font-medium text-gray-900 dark:text-white">User Name</p>
-              <button className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                </svg>
+              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                {userName}
+              </p>
+              <button 
+                onClick={handleLogout}
+                className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                Sign out
               </button>
             </div>
           </div>
