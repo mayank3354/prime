@@ -2,7 +2,8 @@
 import { useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter } from 'next/navigation';
-import { AuthError } from '@supabase/supabase-js';
+import { toast ,ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import Link from 'next/link';
 import Image from 'next/image';
 
@@ -31,8 +32,8 @@ export default function LoginPage() {
         router.push('/dashboard');
         router.refresh();
       }
-    } catch (error) {
-      setError(error.message);
+    } catch  {
+      toast.error('Failed to sign in');
     } finally {
       setLoading(false);
     }
@@ -48,8 +49,8 @@ export default function LoginPage() {
       });
 
       if (error) throw error;
-    } catch (error: Error | AuthError) {
-      setError(error.message);
+    } catch  {
+      toast.error('Failed to sign in with Google');
     }
   };
 
@@ -59,6 +60,8 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
+      <ToastContainer position="top-right" theme="colored" />
+      
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">

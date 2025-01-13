@@ -2,9 +2,10 @@
 import { useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter } from 'next/navigation';
-import { AuthError } from '@supabase/supabase-js';
+import { toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import Link from 'next/link';
-import Image from 'next/image';
+//import Image from 'next/image';
 
 export default function SignUpPage() {
   const [email, setEmail] = useState('');
@@ -33,8 +34,8 @@ export default function SignUpPage() {
       if (data) {
         router.push('/auth/verify-email');
       }
-    } catch (error: Error | AuthError) {
-      setError(error.message);
+    } catch  {
+      toast.error('Failed to create account');
     } finally {
       setLoading(false);
     }
