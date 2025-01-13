@@ -6,7 +6,7 @@ export default function VerifyEmail() {
           Check your email
         </h2>
         <p className="text-gray-600 dark:text-gray-400">
-          We've sent you an email with a link to verify your account.
+          We&apos;ve sent you an email with a link to verify your account.
           Please check your inbox and spam folder.
         </p>
       </div>

@@ -27,7 +27,7 @@ export default function Playground() {
       } else {
         toast.error(data.message || 'Invalid API key');
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to validate API key');
     } finally {
       setIsLoading(false);

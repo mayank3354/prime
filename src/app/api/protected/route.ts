@@ -40,7 +40,7 @@ export async function GET(request: Request) {
       },
       { status: 200 }
     );
-  } catch (error) {
+  } catch  {
     return NextResponse.json(
       { message: 'Internal server error' },
       { status: 500 }

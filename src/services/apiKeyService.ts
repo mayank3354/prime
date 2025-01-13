@@ -1,5 +1,5 @@
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { ApiKey } from '@/types/api';
+//import { ApiKey } from '@/types/api';
 
 const supabase = createClientComponentClient();
 
