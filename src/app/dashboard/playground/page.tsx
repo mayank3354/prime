@@ -73,13 +73,20 @@ export default function Playground() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto py-12 px-4">
+    <div className="max-w-4xl mx-auto space-y-8">
       <ToastContainer position="top-right" theme="colored" />
       
-      <h1 className="text-3xl font-bold mb-8">GitHub Repository Summarizer</h1>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+          GitHub Repository Summarizer
+        </h1>
+        <p className="mt-2 text-gray-600 dark:text-gray-400">
+          Analyze and summarize GitHub repositories using AI
+        </p>
+      </div>
       
       {!isValidated ? (
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 mb-8">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6">
           <h2 className="text-xl font-semibold mb-6">Validate API Key</h2>
           
           <form onSubmit={handleValidateKey} className="space-y-6">

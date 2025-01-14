@@ -42,29 +42,28 @@ const Sidebar = () => {
   ];
 
   return (
-    <>
-      {/* Toggle Button */}
-      <button
-        onClick={() => setIsCollapsed(!isCollapsed)}
-        className={`fixed top-4 z-50 rounded-full p-2 bg-blue-600 text-white hover:bg-blue-700 transition-all duration-300 ${
-          isCollapsed ? 'left-4' : 'left-56'
-        }`}
-      >
-        <svg
-          className={`w-6 h-6 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-        </svg>
-      </button>
-
+    <div className="flex min-h-screen">
+      {/* Sidebar */}
       <div
-        className={`fixed left-0 top-0 h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 transition-all duration-300 ease-in-out ${
+        className={`fixed left-0 top-0 h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 transition-all duration-300 ease-in-out z-20 ${
           isCollapsed ? 'w-16' : 'w-64'
         }`}
       >
+        {/* Toggle Button */}
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="absolute -right-3 top-4 z-30 rounded-full p-2 bg-blue-600 text-white hover:bg-blue-700 transition-all duration-300"
+        >
+          <svg
+            className={`w-4 h-4 transition-transform duration-300 ${isCollapsed ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
         {/* Logo */}
         <div className="p-6">
           <Link href="/dashboard" className="flex items-center space-x-2">
@@ -74,13 +73,6 @@ const Sidebar = () => {
               Prime
             </span>
           </Link>
-        </div>
-
-        {/* Personal Dropdown */}
-        <div className={`px-4 mb-4 transition-opacity duration-300 ${isCollapsed ? 'opacity-0' : 'opacity-100'}`}>
-          <select className="w-full p-2 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
-            <option>Personal</option>
-          </select>
         </div>
 
         {/* Navigation */}
@@ -102,26 +94,11 @@ const Sidebar = () => {
               }`}>
                 {item.label}
               </span>
-              {item.external && !isCollapsed && (
-                <svg
-                  className="w-4 h-4 ml-auto"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                  />
-                </svg>
-              )}
             </Link>
           ))}
         </nav>
 
-        {/* User Profile - Updated Section */}
+        {/* User Profile */}
         <div className="absolute bottom-0 w-full p-4 border-t border-gray-200 dark:border-gray-800">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white">
@@ -143,7 +120,12 @@ const Sidebar = () => {
           </div>
         </div>
       </div>
-    </>
+
+      {/* Main Content */}
+      <div className={`flex-1 transition-all duration-300 ${isCollapsed ? 'ml-16' : 'ml-64'}`}>
+        {/* Your main content goes here */}
+      </div>
+    </div>
   );
 };
 
