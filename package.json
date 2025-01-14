@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
-    "@langchain/core": "^0.3.29",
+    "@langchain/core": "^0.3.30",
+    "@langchain/google-genai": "^0.1.6",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.47.12",
     "jose": "^5.9.6",
