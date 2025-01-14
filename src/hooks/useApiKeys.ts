@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import { ApiKey, VisibleKeys } from '@/types/api';
 import { apiKeyService } from '@/services/apiKeyService';
@@ -11,11 +11,11 @@ export function useApiKeys() {
   const [visibleKeys, setVisibleKeys] = useState<VisibleKeys>({});
   const supabase = createClientComponentClient();
 
-  const fetchApiKeys = async () => {
+  const fetchApiKeys = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user?.id) {
-        return; // Exit early if no authenticated user
+        return;
       }
 
       const data = await apiKeyService.fetchApiKeys();
@@ -24,7 +24,14 @@ export function useApiKeys() {
       console.error('Error fetching API keys:', error);
       toast.error('Failed to load API keys');
     }
-  };
+  }, [supabase.auth]);
+
+  useEffect(() => {
+    const init = async () => {
+      await fetchApiKeys();
+    };
+    init();
+  }, []);
 
   const createApiKey = async (data: { name: string; limit: number; monthlyLimit: boolean }) => {
     setIsLoading(true);
