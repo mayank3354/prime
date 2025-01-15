@@ -42,7 +42,7 @@ export default function ResetPasswordPage() {
 
       toast.success('Password updated successfully');
       router.push('/auth/login');
-    } catch (error) {
+    } catch  {
       toast.error('Failed to update password');
     } finally {
       setLoading(false);
