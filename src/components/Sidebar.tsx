@@ -38,7 +38,7 @@ const Sidebar = () => {
     { icon: '📊', label: 'Research Reports', href: '/dashboard/reports' },
     { icon: '⚡', label: 'API Playground', href: '/dashboard/playground' },
     { icon: '📄', label: 'Invoices', href: '/dashboard/invoices' },
-    { icon: '📚', label: 'Documentation', href: '/dashboard/docs', external: true },
+    { icon: '📚', label: 'Documentation', href: '/dashboard/documentation' },
   ];
 
   return (
@@ -86,7 +86,6 @@ const Sidebar = () => {
                   ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
                   : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
               }`}
-              {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
             >
               <span>{item.icon}</span>
               <span className={`transition-all duration-300 ${
