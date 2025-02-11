@@ -1,10 +1,12 @@
-import type { Metadata } from "next";
-import "./globals.css";
+import { Inter } from 'next/font/google';
+import './globals.css';
 import Sidebar from '@/components/Sidebar';
 
-export const metadata: Metadata = {
-  title: "Prime API Platform",
-  description: "API Management and Research Platform",
+const inter = Inter({ subsets: ['latin'] });
+
+export const metadata = {
+  title: 'Prime - AI Research Assistant',
+  description: 'Transform your research process with AI-powered insights',
 };
 
 export default function RootLayout({
@@ -14,7 +16,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
+      <body className={inter.className}>
         <div className="flex min-h-screen bg-gray-50 dark:bg-gray-900">
           <Sidebar />
           <main className="flex-1 p-8 transition-all duration-300">
