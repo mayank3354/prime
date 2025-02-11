@@ -135,24 +135,24 @@ export default function ResearchAssistant() {
     };
   }, []);
 
-  useEffect(() => {
-    const checkApiKey = () => {
-      const apiKey = localStorage.getItem('research_api_key');
-      const isKeyValid = localStorage.getItem('research_api_key_valid');
+  // useEffect(() => {
+  //   const checkApiKey = () => {
+  //     const apiKey = localStorage.getItem('research_api_key');
+  //     const isKeyValid = localStorage.getItem('research_api_key_valid');
       
-      // Always show validation form if no valid key
-      if (!apiKey || isKeyValid !== 'true') {
-        setIsValidated(false);
-        // Clear any invalid keys
-        localStorage.removeItem('research_api_key');
-        localStorage.removeItem('research_api_key_valid');
-      } else {
-        setIsValidated(true);
-      }
-    };
+  //     // Always show validation form if no valid key
+  //     if (!apiKey || isKeyValid !== 'true') {
+  //       setIsValidated(false);
+  //       // Clear any invalid keys
+  //       localStorage.removeItem('research_api_key');
+  //       localStorage.removeItem('research_api_key_valid');
+  //     } else {
+  //       setIsValidated(true);
+  //     }
+  //   };
 
-    checkApiKey();
-  }, []);
+  //   checkApiKey();
+  // }, []);
 
   const handleValidateKey = async (e: React.FormEvent) => {
     e.preventDefault();
