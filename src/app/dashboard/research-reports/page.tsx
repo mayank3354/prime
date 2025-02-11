@@ -2,24 +2,23 @@
 import { useEffect, useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { toast } from 'react-toastify';
+import { Trash2 } from 'lucide-react';
+import { Button } from "@/components/ui/button";
 
 interface ResearchReport {
   id: string;
   query: string;
   summary: string;
   findings: Array<{
-    title: string;
     content: string;
     source: string;
     relevance: string;
-    credibility: string;
+    credibility: number;
   }>;
-  reference_list: Array<{
-    url: string;
-    title: string;
-    publishDate: string;
-    credibilityScore: string;
-  }>;
+  metadata: {
+    sourcesCount: number;
+    confidence: number;
+  };
   created_at: string;
 }
 
@@ -31,20 +30,28 @@ export default function ResearchReports() {
 
   useEffect(() => {
     fetchReports();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchReports = async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error('Please sign in to view reports');
+        return;
+      }
+
       const { data, error } = await supabase
         .from('research_reports')
         .select('*')
+        .eq('user_id', session.user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setReports(data || []);
     } catch (error) {
+      console.error('Error fetching reports:', error);
       toast.error('Failed to fetch research reports');
-      console.error('Error:', error);
     } finally {
       setIsLoading(false);
     }
@@ -61,155 +68,104 @@ export default function ResearchReports() {
   };
 
   const handleDeleteReport = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this report?')) return;
-
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error('Please sign in to delete reports');
+        return;
+      }
+
+      const confirmed = window.confirm('Are you sure you want to delete this report? This action cannot be undone.');
+      if (!confirmed) return;
+
       const { error } = await supabase
         .from('research_reports')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('user_id', session.user.id);
 
-      if (error) throw error;
-      
-      toast.success('Report deleted successfully');
-      setReports(reports.filter(report => report.id !== id));
+      if (error) {
+        console.error('Delete error:', error);
+        throw error;
+      }
+
+      setReports(prevReports => prevReports.filter(report => report.id !== id));
       if (selectedReport?.id === id) {
         setSelectedReport(null);
       }
+      
+      toast.success('Report deleted successfully');
     } catch (error) {
+      console.error('Error deleting report:', error);
       toast.error('Failed to delete report');
-      console.error('Error:', error);
     }
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-8">
-      <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-8">
-        Research Reports
-      </h1>
-
+    <div className="max-w-7xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-6">Research Reports</h1>
+      
       {isLoading ? (
         <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
         </div>
       ) : reports.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-gray-600 dark:text-gray-400">No research reports found</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Reports List */}
-          <div className="lg:col-span-1 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="md:col-span-1 space-y-4">
             {reports.map((report) => (
               <div
                 key={report.id}
+                onClick={() => setSelectedReport(report)}
                 className={`p-4 rounded-lg cursor-pointer transition-colors ${
                   selectedReport?.id === report.id
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-500'
+                    ? 'bg-blue-50 dark:bg-blue-900/30'
                     : 'bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700'
                 }`}
-                onClick={() => setSelectedReport(report)}
               >
-                <h3 className="font-medium text-gray-900 dark:text-white mb-2 line-clamp-2">
-                  {report.query}
-                </h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                <h3 className="font-medium mb-2">{report.query}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
                   {formatDate(report.created_at)}
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-3">
-                  {report.summary}
                 </p>
               </div>
             ))}
           </div>
 
-          {/* Selected Report Detail */}
-          <div className="lg:col-span-2">
-            {selectedReport ? (
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 space-y-8">
-                <div className="flex justify-between items-start">
-                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                    Research Details
-                  </h2>
-                  <button
+          <div className="md:col-span-2">
+            {selectedReport && (
+              <div className="bg-white dark:bg-gray-800 rounded-lg p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold">{selectedReport.query}</h2>
+                  <Button
+                    variant="destructive"
+                    size="sm"
                     onClick={() => handleDeleteReport(selectedReport.id)}
-                    className="text-red-600 hover:text-red-700 text-sm"
+                    className="flex items-center gap-2"
                   >
+                    <Trash2 className="h-4 w-4" />
                     Delete Report
-                  </button>
+                  </Button>
                 </div>
-
                 <div className="prose dark:prose-invert max-w-none">
-                  <div className="mb-8">
-                    <h3 className="text-lg font-medium mb-2">Query</h3>
-                    <p className="text-gray-700 dark:text-gray-300">{selectedReport.query}</p>
-                  </div>
-
-                  <div className="mb-8">
-                    <h3 className="text-lg font-medium mb-2">Summary</h3>
-                    <p className="text-gray-700 dark:text-gray-300">{selectedReport.summary}</p>
-                  </div>
-
-                  <div className="mb-8">
-                    <h3 className="text-lg font-medium mb-4">Key Findings</h3>
-                    <div className="space-y-4">
-                      {selectedReport.findings.map((finding, index) => (
-                        <div
-                          key={index}
-                          className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4"
-                        >
-                          <h4 className="font-medium mb-2">{finding.title}</h4>
-                          <p className="text-gray-700 dark:text-gray-300 mb-2">
-                            {finding.content}
-                          </p>
-                          <div className="flex gap-4 text-sm">
-                            <span className="text-blue-600 dark:text-blue-400">
-                              Relevance: {finding.relevance}
-                            </span>
-                            <span className="text-green-600 dark:text-green-400">
-                              Credibility: {finding.credibility}
-                            </span>
-                          </div>
+                  <p className="mb-6">{selectedReport.summary}</p>
+                  
+                  <h3 className="text-lg font-semibold mb-4">Key Findings</h3>
+                  <div className="space-y-4">
+                    {selectedReport.findings.map((finding, index) => (
+                      <div key={index} className="border dark:border-gray-700 rounded-lg p-4">
+                        <p>{finding.content}</p>
+                        <div className="mt-2 flex gap-4 text-sm text-gray-600 dark:text-gray-400">
+                          <span>Source: {finding.source}</span>
+                          <span>Relevance: {finding.relevance}</span>
+                          <span>Credibility: {Math.round(finding.credibility * 100)}%</span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mb-8">
-                    <h3 className="text-lg font-medium mb-4">References</h3>
-                    <div className="space-y-4">
-                      {selectedReport.reference_list.map((reference, index) => (
-                        <div
-                          key={index}
-                          className="border-l-4 border-gray-300 dark:border-gray-600 pl-4"
-                        >
-                          <a
-                            href={reference.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 dark:text-blue-400 hover:underline"
-                          >
-                            {reference.title}
-                          </a>
-                          <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                            <span className="mr-4">
-                              Published: {reference.publishDate}
-                            </span>
-                            <span>
-                              Credibility Score: {reference.credibilityScore}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
-            ) : (
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 text-center">
-                <p className="text-gray-600 dark:text-gray-400">
-                  Select a report to view details
-                </p>
               </div>
             )}
           </div>

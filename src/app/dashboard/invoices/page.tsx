@@ -18,7 +18,7 @@ export default function Invoices() {
 
   useEffect(() => {
     fetchInvoices();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchInvoices = async () => {
     try {

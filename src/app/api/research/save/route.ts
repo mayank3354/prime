@@ -4,58 +4,50 @@ import { cookies } from 'next/headers';
 
 export async function POST(request: Request) {
   try {
-    const apiKey = request.headers.get('x-api-key');
-    
-    if (!apiKey) {
-      return NextResponse.json(
-        { message: 'API key is required' },
-        { status: 401 }
-      );
-    }
-
     const supabase = createRouteHandlerClient({ cookies });
-
-    // Validate API key
-    const { data: keyData, error: keyError } = await supabase
-      .from('api_keys')
-      .select('id')
-      .eq('key', apiKey)
-      .single();
-
-    if (keyError || !keyData) {
-      return NextResponse.json(
-        { message: 'Invalid API key' },
-        { status: 401 }
-      );
-    }
-
     const researchData = await request.json();
 
-    // Save research report with renamed field
-    const { error: saveError } = await supabase
+    // Get the current user's session
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+      return NextResponse.json(
+        { message: 'Unauthorized - Please sign in' },
+        { status: 401 }
+      );
+    }
+
+    // Save to research_reports table
+    const { error: reportsError } = await supabase
       .from('research_reports')
       .insert({
+        user_id: session.user.id,
         query: researchData.query,
         summary: researchData.summary,
         findings: researchData.findings,
-        reference_list: researchData.references,
+        metadata: {
+          sourcesCount: researchData.metadata?.sourcesCount || 0,
+          confidence: researchData.metadata?.confidence || 0
+        },
         created_at: new Date().toISOString(),
       });
 
-    if (saveError) {
-      console.error('Error saving research:', saveError);
+    if (reportsError) {
+      console.error('Error saving to research_reports:', reportsError);
       return NextResponse.json(
         { message: 'Failed to save research report' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ message: 'Research report saved successfully' });
+    return NextResponse.json({ 
+      message: 'Research report saved successfully',
+      saved: true 
+    });
 
   } catch (error) {
     console.error('Save research error:', error);
     return NextResponse.json(
-      { message: 'Internal server error' },
+      { message: 'Failed to save research report' },
       { status: 500 }
     );
   }

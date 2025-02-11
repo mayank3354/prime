@@ -7,7 +7,15 @@ export async function POST(request: Request) {
     const { apiKey } = await request.json();
     const supabase = createRouteHandlerClient({ cookies });
 
-    // Check if API key exists in database
+    // Store API key in secure cookie
+    // cookies().set('research_api_key', apiKey, {
+    //   httpOnly: true,
+    //   secure: process.env.NODE_ENV === 'production',
+    //   sameSite: 'strict',
+    //   maxAge: 60 * 60 * 24 * 30 // 30 days
+    // });
+
+    // Validate key exists in database
     const { data, error } = await supabase
       .from('api_keys')
       .select('id')
@@ -21,10 +29,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
-      { message: 'Valid API key' },
-      { status: 200 }
-    );
+    return NextResponse.json({ message: 'API key validated successfully' });
   } catch  {
     return NextResponse.json(
       { message: 'Failed to validate API key' },

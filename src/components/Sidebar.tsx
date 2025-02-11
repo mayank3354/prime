@@ -35,7 +35,7 @@ const Sidebar = () => {
   const navItems = [
     { icon: '🏠', label: 'Overview', href: '/dashboard' },
     { icon: '🤖', label: 'Research Assistant', href: '/dashboard/assistant' },
-    { icon: '📊', label: 'Research Reports', href: '/dashboard/reports' },
+    { icon: '📊', label: 'Research Reports', href: '/dashboard/research-reports' },
     { icon: '⚡', label: 'API Playground', href: '/dashboard/playground' },
     { icon: '📄', label: 'Invoices', href: '/dashboard/invoices' },
     { icon: '📚', label: 'Documentation', href: '/dashboard/documentation' },
@@ -48,6 +48,7 @@ const Sidebar = () => {
         className={`fixed left-0 top-0 h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 transition-all duration-300 ease-in-out z-20 ${
           isCollapsed ? 'w-16' : 'w-64'
         }`}
+        data-sidebar
       >
         {/* Toggle Button */}
         <button

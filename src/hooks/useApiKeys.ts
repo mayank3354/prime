@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, } from 'react';
 import { toast } from 'react-toastify';
 import { ApiKey, VisibleKeys } from '@/types/api';
 import { apiKeyService } from '@/services/apiKeyService';
@@ -7,31 +7,29 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 export function useApiKeys() {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [visibleKeys, setVisibleKeys] = useState<VisibleKeys>({});
   const supabase = createClientComponentClient();
 
-  const fetchApiKeys = useCallback(async () => {
+  const fetchApiKeys = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user?.id) {
-        return;
-      }
+      const { data, error } = await supabase
+        .from('api_keys')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      const data = await apiKeyService.fetchApiKeys();
+      if (error) throw error;
       setApiKeys(data || []);
     } catch (error) {
       console.error('Error fetching API keys:', error);
-      toast.error('Failed to load API keys');
+    } finally {
+      setIsLoading(false);
     }
-  }, [supabase.auth]);
+  };
 
   useEffect(() => {
-    const init = async () => {
-      await fetchApiKeys();
-    };
-    init();
-  }, []);
+    fetchApiKeys();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createApiKey = async (data: { name: string; limit: number; monthlyLimit: boolean }) => {
     setIsLoading(true);
