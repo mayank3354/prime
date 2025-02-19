@@ -4,6 +4,22 @@ import { cookies } from 'next/headers';
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { TavilySearchResults } from "@langchain/community/tools/tavily_search";
 
+function sanitizeJsonString(str: string): string {
+  return str
+    // Remove markdown formatting
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    // Replace line breaks with spaces
+    .replace(/\n/g, ' ')
+    // Replace multiple spaces with single space
+    .replace(/\s+/g, ' ')
+    // Fix any broken quotes
+    .replace(/[""]/g, '"')
+    // Escape any remaining special characters
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .trim();
+}
+
 export async function POST(request: Request) {
   try {
     const apiKey = request.headers.get('x-api-key');
@@ -15,6 +31,14 @@ export async function POST(request: Request) {
     }
 
     const supabase = createRouteHandlerClient({ cookies });
+    const { query } = await request.json();
+    
+    if (!query) {
+      return NextResponse.json(
+        { message: 'Query is required' },
+        { status: 400 }
+      );
+    }
 
     // Validate API key and get current usage
     const { data: keyData, error: keyError } = await supabase
@@ -38,19 +62,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const { query } = await request.json();
-    
-    if (!query) {
-      return NextResponse.json(
-        { message: 'Query is required' },
-        { status: 400 }
-      );
-    }
-
-    // Initialize the model and tools
+    // Initialize the model
     const model = new ChatGoogleGenerativeAI({
       modelName: "gemini-pro",
-      apiKey: process.env.GOOGLE_API_KEY,
+      apiKey: process.env.GOOGLE_API_KEY!,
       temperature: 0.3,
     });
 
@@ -61,51 +76,156 @@ export async function POST(request: Request) {
     // Perform search
     const searchResults = await searchTool.invoke(query);
 
-    // Generate research response
+    // First, get relevant images
+    const imageSearchResults = await searchTool.invoke(`${query} relevant images diagrams infographics`);
+    
+    // Generate research response with a generic, comprehensive prompt
     const response = await model.invoke(
-      `Analyze these search results and provide a detailed research summary with key findings:
-      Search Query: ${query}
-      Search Results: ${JSON.stringify(searchResults)}
+      `You are an expert research analyst. Provide a comprehensive analysis about: "${query}"
       
-      Format the response as:
+      Based on these search results: ${JSON.stringify(searchResults)}
+
+      Important: Return a SINGLE-LINE JSON string with this structure:
       {
-        "summary": "concise overview",
+        "summary": {
+          "overview": "Start with a comprehensive overview paragraph that introduces the topic and its significance",
+          "currentState": "Provide a detailed paragraph about the current state of development, key players, and recent breakthroughs",
+          "impact": "Explain the broader impact and implications in a well-structured paragraph",
+          "futureOutlook": "Conclude with forward-looking insights and future developments in the field",
+          "keyTakeaways": [
+            "3-4 bullet points highlighting the most important takeaways",
+            "Each point should be concise but informative"
+          ]
+        },
         "findings": [
           {
-            "content": "key finding",
-            "source": "source url",
+            "title": "Key Finding or Topic Area",
+            "content": "Detailed explanation with specific facts, figures, and expert insights. Include real data points, research findings, and concrete examples",
+            "source": "URL of authoritative source",
             "relevance": "High/Medium/Low",
-            "credibility": 0.9
+            "credibility": 0.9,
+            "type": "text",
+            "category": "Choose relevant category (e.g., Technology, Research, Market Analysis, Scientific Finding, etc.)"
           }
         ],
-        "suggestedQuestions": ["follow-up question 1", "follow-up question 2"],
+        "keyInsights": [
+          {
+            "point": "Significant insight or trend",
+            "explanation": "Detailed analysis of importance and implications",
+            "supportingEvidence": [
+              "Include specific data points",
+              "Reference expert opinions",
+              "Add relevant statistics",
+              "Cite research findings"
+            ]
+          }
+        ],
+        "statistics": [
+          {
+            "value": "Specific numerical data",
+            "metric": "What this number measures",
+            "context": "Why this statistic is important",
+            "source": "Source of the data"
+          }
+        ],
+        "suggestedQuestions": [
+          // Include 4-5 specific follow-up questions that would help explore:
+          // - Deeper technical aspects
+          // - Comparative analysis
+          // - Future implications
+          // - Practical applications
+          // - Related developments
+          // Make questions natural and contextual to the research
+        ],
         "metadata": {
-          "sourcesCount": 5,
-          "confidence": 0.85
+          "sourcesCount": Number of unique sources used,
+          "confidence": Confidence score between 0 and 1,
+          "researchDepth": "comprehensive",
+          "lastUpdated": "${new Date().toISOString()}"
         }
-      }`
+      }
+
+      Guidelines:
+      1. Focus on factual, verifiable information
+      2. Include diverse perspectives and sources
+      3. Provide specific examples and case studies
+      4. Add relevant statistics and data points
+      5. Cite authoritative sources
+      6. Cover recent developments and future implications
+      7. Maintain objectivity in analysis`
     );
 
-    console.log('LLM Response:', response.content);
-
-    // Parse the response
-    const research = JSON.parse(response.content as string);
-
-    // Increment API usage
-    const { error: updateError } = await supabase
-      .from('api_keys')
-      .update({ 
-        usage: (keyData.usage || 0) + 1,
-        last_used_at: new Date().toISOString()
-      })
-      .eq('id', keyData.id);
-
-    if (updateError) {
-      console.error('Failed to update API usage:', updateError);
+    // Clean and parse the response
+    let cleanedResponse = response.content as string;
+    
+    // Remove any markdown code blocks
+    if (cleanedResponse.includes('```')) {
+      cleanedResponse = cleanedResponse.replace(/```json\n|```/g, '');
     }
 
-    return NextResponse.json({ research });
+    // Sanitize the JSON string
+    cleanedResponse = sanitizeJsonString(cleanedResponse);
 
+    try {
+      // Parse the cleaned response
+      const research = JSON.parse(cleanedResponse);
+
+      // Add relevant images
+      if (imageSearchResults && Array.isArray(imageSearchResults)) {
+        const relevantImages = imageSearchResults
+          .filter(item => 
+            item.url && 
+            (item.url.match(/\.(jpg|jpeg|png|gif)$/i) || 
+             item.url.includes('images') ||
+             item.url.includes('media'))
+          )
+          .slice(0, 5)
+          .map(item => ({
+            type: "image",
+            url: item.url,
+            caption: sanitizeJsonString(item.title || "Related visual content"),
+            source: item.source || item.url
+          }));
+
+        research.visualData = research.visualData || [];
+        research.visualData.push(...relevantImages);
+      }
+
+      // Update API usage
+      await supabase
+        .from('api_keys')
+        .update({ 
+          usage: (keyData.usage || 0) + 1,
+          last_used_at: new Date().toISOString()
+        })
+        .eq('id', keyData.id);
+
+      // Then in the sanitization, combine the summary sections
+      if (research.summary && typeof research.summary === 'object') {
+        research.summary = [
+          research.summary.overview,
+          research.summary.currentState,
+          research.summary.impact,
+          research.summary.futureOutlook,
+          '',
+          'Key Takeaways:',
+          ...research.summary.keyTakeaways.map((point: string) => `• ${point}`)
+        ].join('\n\n');
+      }
+
+      return NextResponse.json({ research });
+
+    } catch (parseError) {
+      console.error('JSON Parse Error:', parseError);
+      console.log('Raw Response:', cleanedResponse);
+      
+      // Return a more structured error response
+      return NextResponse.json({
+        message: 'Failed to parse research results',
+        error: parseError instanceof Error ? parseError.message : 'Unknown parsing error',
+        rawResponse: cleanedResponse.slice(0, 200) + '...' // First 200 chars for debugging
+      }, { status: 500 });
+    }
   } catch (error) {
     console.error('Research error:', error);
     return NextResponse.json(

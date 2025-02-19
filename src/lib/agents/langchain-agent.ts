@@ -17,14 +17,34 @@ const ResearchOutputSchema = z.object({
     content: z.string(),
     source: z.string(),
     relevance: z.enum(["High", "Medium", "Low"]),
-    credibility: z.enum(["1", "2", "3", "4", "5"])
+    credibility: z.number(),
+    imageUrl: z.string().optional(),
+    type: z.enum(["text", "image", "chart", "quote"]).default("text"),
+    category: z.string()
   })),
-  references: z.array(z.object({
-    url: z.string().url(),
-    title: z.string(),
-    publishDate: z.string(),
-    credibilityScore: z.enum(["1", "2", "3", "4", "5"])
-  }))
+  visualData: z.array(z.object({
+    type: z.enum(["image", "chart", "graph", "diagram"]),
+    url: z.string(),
+    caption: z.string(),
+    source: z.string()
+  })).optional(),
+  keyInsights: z.array(z.object({
+    point: z.string(),
+    explanation: z.string(),
+    supportingEvidence: z.array(z.string())
+  })),
+  statistics: z.array(z.object({
+    value: z.string(),
+    metric: z.string(),
+    context: z.string(),
+    source: z.string()
+  })).optional(),
+  metadata: z.object({
+    sourcesCount: z.number(),
+    confidence: z.number(),
+    researchDepth: z.enum(["basic", "intermediate", "comprehensive"]),
+    lastUpdated: z.string()
+  })
 });
 
 // Initialize Supabase client and vector store
@@ -48,15 +68,62 @@ const initVectorStore = async () => {
 
 // Create the research prompt
 const researchPrompt = ChatPromptTemplate.fromMessages([
-  ["system", `You are a research assistant that provides detailed, accurate information.
-    Analyze the search results and create a structured report with:
-    - A clear summary
-    - Key findings with relevance and credibility scores
-    - Verified references
+  ["system", `You are an expert research assistant that provides comprehensive, detailed information.
+    Analyze the search results and create a detailed report.
     
-    Focus on accuracy and cite your sources.`],
+    IMPORTANT: Your response must be in valid JSON format with the following structure:
+    {
+      "summary": "thorough executive summary",
+      "findings": [
+        {
+          "title": "main point",
+          "content": "detailed explanation",
+          "source": "source url",
+          "relevance": "High/Medium/Low",
+          "credibility": 0.95,
+          "type": "text",
+          "category": "category name"
+        }
+      ],
+      "visualData": [
+        {
+          "type": "image/chart/graph/diagram",
+          "url": "image url",
+          "caption": "descriptive caption",
+          "source": "image source"
+        }
+      ],
+      "keyInsights": [
+        {
+          "point": "key insight title",
+          "explanation": "detailed explanation",
+          "supportingEvidence": ["evidence 1", "evidence 2"]
+        }
+      ],
+      "statistics": [
+        {
+          "value": "statistical value",
+          "metric": "metric name",
+          "context": "contextual explanation",
+          "source": "data source"
+        }
+      ],
+      "metadata": {
+        "sourcesCount": 5,
+        "confidence": 0.9,
+        "researchDepth": "comprehensive",
+        "lastUpdated": "2024-03-21T12:00:00Z"
+      }
+    }
+
+    Ensure your response:
+    1. Is valid JSON
+    2. Follows the exact structure above
+    3. Includes all required fields
+    4. Uses proper JSON syntax with double quotes
+    `],
   ["human", "{query}"],
-  ["assistant", "I'll research this and provide a structured report."],
+  ["assistant", "I'll analyze this and provide a properly formatted JSON response."],
   ["human", "Search results: {search_results}"]
 ]);
 
@@ -123,6 +190,22 @@ export class ResearchAgent {
         query,
         search_results: JSON.stringify(searchResults),
       });
+
+      // Add image search results if needed
+      if (!result.visualData || result.visualData.length === 0) {
+        const imageSearchResults = await this.searchTool.invoke(`${query} relevant images diagrams charts`);
+        if (imageSearchResults && Array.isArray(imageSearchResults)) {
+          result.visualData = imageSearchResults
+            .filter(item => item.url && item.url.match(/\.(jpg|jpeg|png|gif)$/i))
+            .slice(0, 4)
+            .map(item => ({
+              type: "image",
+              url: item.url,
+              caption: item.title || "Related visual",
+              source: item.source || item.url
+            }));
+        }
+      }
 
       // Store the result in vector store
       if (this.vectorStore) {
