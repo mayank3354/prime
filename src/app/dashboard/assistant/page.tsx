@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 // import Link from 'next/link';
 // import { Button } from "@/components/ui/button";
 import Image from 'next/image';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 interface ResearchResult {
   summary: string;
@@ -211,6 +212,7 @@ export default function ResearchAssistant() {
  // const [hasSearched, setHasSearched] = useState(false);
   const [, setIsSaving] = useState(false);
   const [, setShowApiKeyModal] = useState(false);
+  const supabase = createClientComponentClient();
 
   useEffect(() => {
     const handleResize = () => {
@@ -231,50 +233,67 @@ export default function ResearchAssistant() {
   }, []);
 
   useEffect(() => {
-    const checkApiKey = () => {
-      const storedKey = localStorage.getItem('research_api_key');
-      const isKeyValid = localStorage.getItem('research_api_key_valid');
-      
-      if (!storedKey || isKeyValid !== 'true') {
+    const checkApiKey = async () => {
+      try {
+        // Get current user's session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+          setIsValidated(false);
+          setShowApiKeyModal(true);
+          return;
+        }
+
+        // Get user's API keys
+        const { data: apiKeys, error } = await supabase
+          .from('api_keys')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .limit(1)
+          .single();
+
+        if (error || !apiKeys) {
+          setIsValidated(false);
+          setShowApiKeyModal(true);
+          return;
+        }
+
+        // Store and validate the API key
+        localStorage.setItem('research_api_key', apiKeys.key);
+        localStorage.setItem('research_api_key_valid', 'true');
+        setApiKey(apiKeys.key);
+        setIsValidated(true);
+      } catch (error) {
+        console.error('Error checking API key:', error);
         setIsValidated(false);
         setShowApiKeyModal(true);
-      } else {
-        setApiKey(storedKey);
-        setIsValidated(true);
       }
     };
 
     checkApiKey();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleValidateKey = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!apiKey.trim()) return;
-
-    setIsLoading(true);
+  const handleValidateKey = async (inputKey: string) => {
     try {
       const response = await fetch('/api/validate-key', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey })
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ apiKey: inputKey }),
       });
 
-      const data = await response.json();
-
       if (response.ok) {
-        localStorage.setItem('research_api_key', apiKey);
+        localStorage.setItem('research_api_key', inputKey);
         localStorage.setItem('research_api_key_valid', 'true');
+        setApiKey(inputKey);
         setIsValidated(true);
-        toast.success('API Key validated successfully');
+        setShowApiKeyModal(false);
       } else {
-        toast.error(data.message);
-        localStorage.removeItem('research_api_key');
-        localStorage.removeItem('research_api_key_valid');
+        toast.error('Invalid API key');
       }
-    } catch {
+    } catch (error) {
+      console.error('Validation error:', error);
       toast.error('Failed to validate API key');
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -369,7 +388,10 @@ export default function ResearchAssistant() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 max-w-md w-full">
             <h3 className="text-xl font-bold mb-4">Enter API Key</h3>
-            <form onSubmit={handleValidateKey}>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              handleValidateKey(apiKey);
+            }}>
               <input
                 type="text"
                 value={apiKey}
