@@ -1,239 +1,330 @@
-import { ChatOpenAI } from "@langchain/openai";
+import { NextResponse } from 'next/server';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { TavilySearchResults } from "@langchain/community/tools/tavily_search";
-import { SupabaseVectorStore } from "@langchain/community/vectorstores/supabase";
-import { createClient } from "@supabase/supabase-js";
-import { OpenAIEmbeddings } from "@langchain/openai";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-//import { createStructuredOutputChainFromZod } from "langchain/chains/openai_functions";
-import { z } from "zod";
-//import { JsonOutputParser } from "langchain/output_parsers";
 
-// Define the output schema
-const ResearchOutputSchema = z.object({
-  summary: z.string(),
-  findings: z.array(z.object({
-    title: z.string(),
-    content: z.string(),
-    source: z.string(),
-    relevance: z.enum(["High", "Medium", "Low"]),
-    credibility: z.number(),
-    imageUrl: z.string().optional(),
-    type: z.enum(["text", "image", "chart", "quote"]).default("text"),
-    category: z.string()
-  })),
-  visualData: z.array(z.object({
-    type: z.enum(["image", "chart", "graph", "diagram"]),
-    url: z.string(),
-    caption: z.string(),
-    source: z.string()
-  })).optional(),
-  keyInsights: z.array(z.object({
-    point: z.string(),
-    explanation: z.string(),
-    supportingEvidence: z.array(z.string())
-  })),
-  statistics: z.array(z.object({
-    value: z.string(),
-    metric: z.string(),
-    context: z.string(),
-    source: z.string()
-  })).optional(),
-  metadata: z.object({
-    sourcesCount: z.number(),
-    confidence: z.number(),
-    researchDepth: z.enum(["basic", "intermediate", "comprehensive"]),
-    lastUpdated: z.string()
-  })
-});
-
-// Initialize Supabase client and vector store
-const initVectorStore = async () => {
-  const client = createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_PRIVATE_KEY!
-  );
-
-  return new SupabaseVectorStore(
-    new OpenAIEmbeddings({
-      openAIApiKey: process.env.OPENAI_API_KEY,
-    }), 
-    {
-      client,
-      tableName: "documents",
-      queryName: "match_documents",
-    }
-  );
-};
-
-// Create the research prompt
-const researchPrompt = ChatPromptTemplate.fromMessages([
-  ["system", `You are an expert research assistant that provides comprehensive, detailed information.
-    Analyze the search results and create a detailed report.
-    
-    IMPORTANT: Your response must be in valid JSON format with the following structure:
-    {
-      "summary": "thorough executive summary",
-      "findings": [
-        {
-          "title": "main point",
-          "content": "detailed explanation",
-          "source": "source url",
-          "relevance": "High/Medium/Low",
-          "credibility": 0.95,
-          "type": "text",
-          "category": "category name"
-        }
-      ],
-      "visualData": [
-        {
-          "type": "image/chart/graph/diagram",
-          "url": "image url",
-          "caption": "descriptive caption",
-          "source": "image source"
-        }
-      ],
-      "keyInsights": [
-        {
-          "point": "key insight title",
-          "explanation": "detailed explanation",
-          "supportingEvidence": ["evidence 1", "evidence 2"]
-        }
-      ],
-      "statistics": [
-        {
-          "value": "statistical value",
-          "metric": "metric name",
-          "context": "contextual explanation",
-          "source": "data source"
-        }
-      ],
-      "metadata": {
-        "sourcesCount": 5,
-        "confidence": 0.9,
-        "researchDepth": "comprehensive",
-        "lastUpdated": "2024-03-21T12:00:00Z"
-      }
-    }
-
-    Ensure your response:
-    1. Is valid JSON
-    2. Follows the exact structure above
-    3. Includes all required fields
-    4. Uses proper JSON syntax with double quotes
-    `],
-  ["human", "{query}"],
-  ["assistant", "I'll analyze this and provide a properly formatted JSON response."],
-  ["human", "Search results: {search_results}"]
-]);
+function sanitizeJsonString(str: string): string {
+  return str
+    // Remove markdown formatting
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    // Replace line breaks with spaces
+    .replace(/\n/g, ' ')
+    // Replace multiple spaces with single space
+    .replace(/\s+/g, ' ')
+    // Fix any broken quotes
+    .replace(/[""]/g, '"')
+    // Escape any remaining special characters
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .trim();
+}
 
 export class ResearchAgent {
-  private model: ChatOpenAI | ChatGoogleGenerativeAI;
+  private model: ChatGoogleGenerativeAI;
   private searchTool: TavilySearchResults;
-  private vectorStore: SupabaseVectorStore | null = null;
 
   constructor() {
-    // Initialize the model (using OpenAI or Google, based on available API keys)
-    this.model = process.env.OPENAI_API_KEY 
-      ? new ChatOpenAI({ temperature: 0.3 })
-      : new ChatGoogleGenerativeAI({ 
-          modelName: "gemini-pro",
-          temperature: 0.3,
-        });
+    this.model = new ChatGoogleGenerativeAI({
+      modelName: "gemini-pro",
+      apiKey: process.env.GOOGLE_API_KEY!,
+      temperature: 0.3,
+      maxOutputTokens: 2048,
+    });
 
-    // Initialize the search tool
     this.searchTool = new TavilySearchResults({
       apiKey: process.env.TAVILY_API_KEY!,
     });
   }
 
-  async validateSetup(): Promise<boolean> {
+  async research(query: string) {
     try {
-      // Check required API keys
-      const requiredKeys = {
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-        TAVILY_API_KEY: process.env.TAVILY_API_KEY,
-        SUPABASE_URL: process.env.SUPABASE_URL,
-        SUPABASE_PRIVATE_KEY: process.env.SUPABASE_PRIVATE_KEY,
-      };
+      const searchResults = await this.searchTool.invoke(query);
+      
+      const systemPrompt = `You are a research assistant. Analyze the search results and provide a research report about "${query}". 
+      Format your response as a JSON object with this exact structure:
+      {
+        "summary": "Brief but comprehensive summary",
+        "findings": [
+          {
+            "title": "Main point",
+            "content": "Detailed explanation",
+            "source": "URL",
+            "relevance": "High",
+            "credibility": 0.9,
+            "type": "text",
+            "category": "Research"
+          }
+        ],
+        "keyInsights": [
+          {
+            "point": "Key insight",
+            "explanation": "Detailed explanation",
+            "supportingEvidence": ["Evidence point 1", "Evidence point 2"]
+          }
+        ],
+        "statistics": [
+          {
+            "value": "Specific numerical data",
+            "metric": "What this number measures",
+            "context": "Why this statistic is important",
+            "source": "Source URL"
+          }
+        ],
+        "suggestedQuestions": [
+          "Follow-up question 1?",
+          "Follow-up question 2?",
+          "Follow-up question 3?"
+        ],
+        "metadata": {
+          "sourcesCount": ${searchResults.length},
+          "confidence": 0.9,
+          "researchDepth": "comprehensive",
+          "lastUpdated": "${new Date().toISOString()}"
+        }
+      }`;
 
-      const missingKeys = Object.entries(requiredKeys)
-        .filter(([ value]) => !value)
-        .map(([key]) => key);
+      const response = await this.model.invoke([
+        ["system", systemPrompt],
+        ["human", `Search results: ${JSON.stringify(searchResults)}`]
+      ]);
 
-      if (missingKeys.length > 0) {
-        throw new Error(`Missing required API keys: ${missingKeys.join(', ')}`);
+      let cleanedResponse = response.text;
+      cleanedResponse = cleanedResponse.replace(/```json\n?|```\n?/g, '');
+      cleanedResponse = sanitizeJsonString(cleanedResponse);
+
+      const parsedResponse = JSON.parse(cleanedResponse);
+
+      // Ensure metadata exists
+      if (!parsedResponse.metadata) {
+        parsedResponse.metadata = {
+          sourcesCount: searchResults.length,
+          confidence: 0.9,
+          researchDepth: "comprehensive",
+          lastUpdated: new Date().toISOString()
+        };
       }
 
-      // Initialize vector store
-      this.vectorStore = await initVectorStore();
-      
-      return true;
+      return parsedResponse;
+
     } catch (error) {
-      console.error('Setup validation failed:', error);
-      return false;
+      console.error('Research error:', error);
+      throw new Error('Failed to process research results');
     }
   }
 
-  async research(query: string) {
+  async try(request: Request) {
     try {
-      // Perform search
-      const searchResults = await this.searchTool.invoke(query);
+      const apiKey = request.headers.get('x-api-key');
+      if (!apiKey) {
+        return NextResponse.json(
+          { message: 'API key is required' },
+          { status: 401 }
+        );
+      }
 
-      // Create the chain with structured output
-      const chain = researchPrompt.pipe(
-        this.model.withStructuredOutput(ResearchOutputSchema)
-      );
+      const supabase = createRouteHandlerClient({ cookies });
+      const { query } = await request.json();
+      
+      if (!query) {
+        return NextResponse.json(
+          { message: 'Query is required' },
+          { status: 400 }
+        );
+      }
 
-      // Run the chain
-      const result = await chain.invoke({
-        query,
-        search_results: JSON.stringify(searchResults),
+      // Validate API key and get current usage
+      const { data: keyData, error: keyError } = await supabase
+        .from('api_keys')
+        .select('id, usage, monthly_limit, is_monthly_limit')
+        .eq('key', apiKey)
+        .single();
+
+      if (keyError || !keyData) {
+        return NextResponse.json(
+          { message: 'Invalid API key' },
+          { status: 401 }
+        );
+      }
+
+      // Check usage limits
+      if (keyData.is_monthly_limit && keyData.usage >= keyData.monthly_limit) {
+        return NextResponse.json(
+          { message: 'Monthly API limit exceeded' },
+          { status: 429 }
+        );
+      }
+
+      // Initialize the model
+      const model = new ChatGoogleGenerativeAI({
+        modelName: "gemini-pro",
+        apiKey: process.env.GOOGLE_API_KEY!,
+        temperature: 0.3,
       });
 
-      // Add image search results if needed
-      if (!result.visualData || result.visualData.length === 0) {
-        const imageSearchResults = await this.searchTool.invoke(`${query} relevant images diagrams charts`);
+      const searchTool = new TavilySearchResults({
+        apiKey: process.env.TAVILY_API_KEY!,
+      });
+
+      // Perform search
+      const searchResults = await searchTool.invoke(query);
+
+      // First, get relevant images
+      const imageSearchResults = await searchTool.invoke(`${query} relevant images diagrams infographics`);
+      
+      // Generate research response with a generic, comprehensive prompt
+      const response = await model.invoke(
+        `You are an expert research analyst. Provide a comprehensive analysis about: "${query}"
+        
+        Based on these search results: ${JSON.stringify(searchResults)}
+
+        Important: Return a SINGLE-LINE JSON string with this structure:
+        {
+          "summary": {
+            "overview": "Start with a comprehensive overview paragraph that introduces the topic and its significance",
+            "currentState": "Provide a detailed paragraph about the current state of development, key players, and recent breakthroughs",
+            "impact": "Explain the broader impact and implications in a well-structured paragraph",
+            "futureOutlook": "Conclude with forward-looking insights and future developments in the field",
+            "keyTakeaways": [
+              "3-4 bullet points highlighting the most important takeaways",
+              "Each point should be concise but informative"
+            ]
+          },
+          "findings": [
+            {
+              "title": "Key Finding or Topic Area",
+              "content": "Detailed explanation with specific facts, figures, and expert insights. Include real data points, research findings, and concrete examples",
+              "source": "URL of authoritative source",
+              "relevance": "High/Medium/Low",
+              "credibility": 0.9,
+              "type": "text",
+              "category": "Choose relevant category (e.g., Technology, Research, Market Analysis, Scientific Finding, etc.)"
+            }
+          ],
+          "keyInsights": [
+            {
+              "point": "Significant insight or trend",
+              "explanation": "Detailed analysis of importance and implications",
+              "supportingEvidence": [
+                "Include specific data points",
+                "Reference expert opinions",
+                "Add relevant statistics",
+                "Cite research findings"
+              ]
+            }
+          ],
+          "statistics": [
+            {
+              "value": "Specific numerical data",
+              "metric": "What this number measures",
+              "context": "Why this statistic is important",
+              "source": "Source of the data"
+            }
+          ],
+          "suggestedQuestions": [
+            // Include 4-5 specific follow-up questions that would help explore:
+            // - Deeper technical aspects
+            // - Comparative analysis
+            // - Future implications
+            // - Practical applications
+            // - Related developments
+            // Make questions natural and contextual to the research
+          ],
+          "metadata": {
+            "sourcesCount": Number of unique sources used,
+            "confidence": Confidence score between 0 and 1,
+            "researchDepth": "comprehensive",
+            "lastUpdated": "${new Date().toISOString()}"
+          }
+        }
+
+        Guidelines:
+        1. Focus on factual, verifiable information
+        2. Include diverse perspectives and sources
+        3. Provide specific examples and case studies
+        4. Add relevant statistics and data points
+        5. Cite authoritative sources
+        6. Cover recent developments and future implications
+        7. Maintain objectivity in analysis`
+      );
+
+      // Clean and parse the response
+      let cleanedResponse = response.content as string;
+      
+      // Remove any markdown code blocks
+      if (cleanedResponse.includes('```')) {
+        cleanedResponse = cleanedResponse.replace(/```json\n|```/g, '');
+      }
+
+      // Sanitize the JSON string
+      cleanedResponse = sanitizeJsonString(cleanedResponse);
+
+      try {
+        // Parse the cleaned response
+        const research = JSON.parse(cleanedResponse);
+
+        // Add relevant images
         if (imageSearchResults && Array.isArray(imageSearchResults)) {
-          result.visualData = imageSearchResults
-            .filter(item => item.url && item.url.match(/\.(jpg|jpeg|png|gif)$/i))
-            .slice(0, 4)
+          const relevantImages = imageSearchResults
+            .filter(item => 
+              item.url && 
+              (item.url.match(/\.(jpg|jpeg|png|gif)$/i) || 
+               item.url.includes('images') ||
+               item.url.includes('media'))
+            )
+            .slice(0, 5)
             .map(item => ({
               type: "image",
               url: item.url,
-              caption: item.title || "Related visual",
+              caption: sanitizeJsonString(item.title || "Related visual content"),
               source: item.source || item.url
             }));
+
+          research.visualData = research.visualData || [];
+          research.visualData.push(...relevantImages);
         }
-      }
 
-      // Store the result in vector store
-      if (this.vectorStore) {
-        await this.vectorStore.addDocuments([{
-          pageContent: JSON.stringify(result),
-          metadata: { query, timestamp: new Date().toISOString() }
-        }]);
-      }
+        // Update API usage
+        await supabase
+          .from('api_keys')
+          .update({ 
+            usage: (keyData.usage || 0) + 1,
+            last_used_at: new Date().toISOString()
+          })
+          .eq('id', keyData.id);
 
-      return result;
+        // Then in the sanitization, combine the summary sections
+        if (research.summary && typeof research.summary === 'object') {
+          research.summary = [
+            research.summary.overview,
+            research.summary.currentState,
+            research.summary.impact,
+            research.summary.futureOutlook,
+            '',
+            'Key Takeaways:',
+            ...research.summary.keyTakeaways.map((point: string) => `• ${point}`)
+          ].join('\n\n');
+        }
+
+        return NextResponse.json({ research });
+
+      } catch (parseError) {
+        console.error('JSON Parse Error:', parseError);
+        console.log('Raw Response:', cleanedResponse);
+        
+        // Return a more structured error response
+        return NextResponse.json({
+          message: 'Failed to parse research results',
+          error: parseError instanceof Error ? parseError.message : 'Unknown parsing error',
+          rawResponse: cleanedResponse.slice(0, 200) + '...' // First 200 chars for debugging
+        }, { status: 500 });
+      }
     } catch (error) {
       console.error('Research error:', error);
-      throw error;
-    }
-  }
-
-  async findSimilarQueries(query: string) {
-    if (!this.vectorStore) return [];
-
-    try {
-      const results = await this.vectorStore.similaritySearch(query, 3);
-      return results.map(doc => ({
-        query: doc.metadata.query,
-        timestamp: doc.metadata.timestamp,
-      }));
-    } catch (error) {
-      console.error('Similar queries search error:', error);
-      return [];
+      return NextResponse.json(
+        { message: 'Research failed', error: error instanceof Error ? error.message : 'Unknown error' },
+        { status: 500 }
+      );
     }
   }
 } 

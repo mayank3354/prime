@@ -4,12 +4,15 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { PlusIcon, MagnifyingGlassIcon, ChartBarIcon, LinkIcon, QuestionMarkCircleIcon} from '@heroicons/react/24/outline';
 //import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Book, CheckCircle, ExternalLink, SaveIcon, Clock, Loader } from 'lucide-react';
+import { Sparkles, Book, CheckCircle, ExternalLink, SaveIcon, Clock, Loader, Globe, BookOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 // import Link from 'next/link';
 // import { Button } from "@/components/ui/button";
 import Image from 'next/image';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Search } from "lucide-react";
+import { debounce } from 'lodash';
 
 interface ResearchResult {
   summary: string;
@@ -48,16 +51,14 @@ interface ResearchResult {
   }>;
 }
 
-// interface SaveResearchPayload {
-//   query: string;
-//   summary: string;
-//   findings: Array<{
-//     content: string;
-//     source: string;
-//     relevance: string;
-//     credibility: number;
-//   }>;
-// }
+interface ResearchStatus {
+  stage: string;
+  message: string;
+  progress?: {
+    current: number;
+    total: number;
+  };
+}
 
 const ResearchResultView = ({ result, query, onSave }: { result: ResearchResult; query: string; onSave: () => void }) => {
   return (
@@ -209,10 +210,60 @@ export default function ResearchAssistant() {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
- // const [hasSearched, setHasSearched] = useState(false);
+  const [searchMode, setSearchMode] = useState<'web' | 'academic'>('web');
   const [, setIsSaving] = useState(false);
   const [, setShowApiKeyModal] = useState(false);
+  const [status, setStatus] = useState<ResearchStatus | null>(null);
   const supabase = createClientComponentClient();
+
+  // Debounced API key check
+  const debouncedCheckApiKey = debounce(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        setIsValidated(false);
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      // Check if we already have a valid key
+      const storedKey = localStorage.getItem('research_api_key');
+      const isKeyValid = localStorage.getItem('research_api_key_valid');
+      if (storedKey && isKeyValid === 'true') {
+        setApiKey(storedKey);
+        setIsValidated(true);
+        return;
+      }
+
+      // Only fetch from Supabase if we don't have a valid key
+      const { data: apiKeys, error } = await supabase
+        .from('api_keys')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .limit(1)
+        .single();
+
+      if (error || !apiKeys) {
+        setIsValidated(false);
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      localStorage.setItem('research_api_key', apiKeys.key);
+      localStorage.setItem('research_api_key_valid', 'true');
+      setApiKey(apiKeys.key);
+      setIsValidated(true);
+    } catch (error) {
+      console.error('Error checking API key:', error);
+      setIsValidated(false);
+      setShowApiKeyModal(true);
+    }
+  }, 1000); // 1 second delay
+
+  useEffect(() => {
+    debouncedCheckApiKey();
+    return () => debouncedCheckApiKey.cancel();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handleResize = () => {
@@ -231,46 +282,6 @@ export default function ResearchAssistant() {
       document.removeEventListener('sidebarToggle', handleResize);
     };
   }, []);
-
-  useEffect(() => {
-    const checkApiKey = async () => {
-      try {
-        // Get current user's session
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) {
-          setIsValidated(false);
-          setShowApiKeyModal(true);
-          return;
-        }
-
-        // Get user's API keys
-        const { data: apiKeys, error } = await supabase
-          .from('api_keys')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .limit(1)
-          .single();
-
-        if (error || !apiKeys) {
-          setIsValidated(false);
-          setShowApiKeyModal(true);
-          return;
-        }
-
-        // Store and validate the API key
-        localStorage.setItem('research_api_key', apiKeys.key);
-        localStorage.setItem('research_api_key_valid', 'true');
-        setApiKey(apiKeys.key);
-        setIsValidated(true);
-      } catch (error) {
-        console.error('Error checking API key:', error);
-        setIsValidated(false);
-        setShowApiKeyModal(true);
-      }
-    };
-
-    checkApiKey();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleValidateKey = async (inputKey: string) => {
     try {
@@ -297,31 +308,49 @@ export default function ResearchAssistant() {
     }
   };
 
-  const handleSearch = async () => {
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!query.trim()) return;
-    
+
     setIsLoading(true);
+    setStatus(null);
+    setResult(null);
+
     try {
       const response = await fetch('/api/research', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': localStorage.getItem('research_api_key') || '',
         },
-        body: JSON.stringify({ query: query.trim() }),
+        body: JSON.stringify({
+          query,
+          mode: searchMode
+        }),
       });
 
-      const data = await response.json();
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response reader');
 
-      if (!response.ok) {
-        throw new Error(data.message || data.error || 'Research failed');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = new TextDecoder().decode(value);
+        const lines = text.split('\n').filter(Boolean);
+
+        for (const line of lines) {
+          const data = JSON.parse(line);
+          if (data.status) {
+            setStatus(data.status);
+          }
+          if (data.research) {
+            setResult(data.research);
+          }
+          if (data.error) {
+            throw new Error(data.error);
+          }
+        }
       }
-
-      if (!data.research) {
-        throw new Error('Invalid research response');
-      }
-
-      setResult(data.research);
     } catch (error) {
       console.error('Search error:', error);
       toast.error(error instanceof Error ? error.message : 'Research failed');
@@ -332,7 +361,7 @@ export default function ResearchAssistant() {
 
   const handleFollowUp = (question: string) => {
     setQuery(question);
-    handleSearch();
+    handleSearch({ preventDefault: () => {} } as React.FormEvent);
   };
 
   // const handleSaveResearch = async () => {
@@ -416,32 +445,57 @@ export default function ResearchAssistant() {
         <div className="flex items-center justify-center min-h-[80vh]">
           <div className="w-full max-w-2xl">
             <h1 className="text-3xl font-bold text-center mb-8">Research Assistant</h1>
+            <div className="mb-8">
+              <Tabs value={searchMode} onValueChange={(value) => setSearchMode(value as 'web' | 'academic')}>
+                <TabsList className="grid grid-cols-2 w-full">
+                  <TabsTrigger 
+                    value="web" 
+                    currentValue={searchMode}
+                    onClick={() => setSearchMode('web')}
+                    className="flex items-center gap-2"
+                  >
+                    <Globe className="w-4 h-4" />
+                    Web Search
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="academic" 
+                    currentValue={searchMode}
+                    onClick={() => setSearchMode('academic')}
+                    className="flex items-center gap-2"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    Academic Research
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
             <div className="relative">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="What would you like to research?"
-                className="w-full px-4 py-3 text-lg rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent"
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-              />
-              <button
-                onClick={handleSearch}
-                disabled={isLoading || !query.trim()}
-                className="absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-              >
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <Loader className="h-5 w-5 animate-spin" />
-                    <span>Researching...</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <MagnifyingGlassIcon className="h-5 w-5" />
-                    <span>Research</span>
-                  </span>
-                )}
-              </button>
+              <form onSubmit={handleSearch} className="relative">
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={
+                      searchMode === 'web' 
+                        ? "Enter your research query..." 
+                        : "Search academic papers..."
+                    }
+                    className="w-full px-4 py-3 rounded-lg border dark:border-gray-600 dark:bg-gray-700"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isLoading || !query.trim()}
+                    className="absolute right-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    {isLoading ? (
+                      <Loader className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Search className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
+              </form>
             </div>
             
             {/* Example Queries */}
@@ -458,7 +512,7 @@ export default function ResearchAssistant() {
                     key={index}
                     onClick={() => {
                       setQuery(suggestion);
-                      handleSearch();
+                      handleSearch({ preventDefault: () => {} } as React.FormEvent);
                     }}
                     className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 text-sm"
                   >
@@ -609,6 +663,30 @@ export default function ResearchAssistant() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Add status display */}
+      {status && (
+        <div className="mt-4 p-4 border rounded-lg bg-gray-50 dark:bg-gray-800">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            <h3 className="font-medium">{status.stage.charAt(0).toUpperCase() + status.stage.slice(1)}</h3>
+          </div>
+          <p className="text-gray-600 dark:text-gray-400">{status.message}</p>
+          {status.progress && (
+            <div className="mt-2">
+              <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                  style={{ width: `${(status.progress.current / status.progress.total) * 100}%` }}
+                />
+              </div>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                {status.progress.current} of {status.progress.total}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
