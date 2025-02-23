@@ -21,7 +21,7 @@ interface TabsTriggerProps {
   children: React.ReactNode;
 }
 
-export const Tabs: React.FC<TabsProps> = ({ value, onValueChange, children }) => {
+export const Tabs: React.FC<TabsProps> = ({ children }) => {
   return (
     <div className="w-full">{children}</div>
   );
