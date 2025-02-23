@@ -149,38 +149,41 @@ export class AcademicResearchAgent {
         message: 'Analyzing research papers...'
       });
 
-      // Enhanced prompt to generate statistics and questions
-      const researchPrompt = `Based on these academic papers, provide a comprehensive analysis of "${query}".
-      Extract key statistics, metrics, and numerical data from the papers.
-      Also generate relevant follow-up questions for deeper research.
-      
-      Format your response as JSON with this structure:
+      // Simplified prompt to avoid JSON parsing issues
+      const researchPrompt = `Analyze these academic papers about "${query}" and provide:
+      1. A brief analysis
+      2. Key statistics and metrics found in the papers
+      3. Follow-up research questions
+
+      Return your response in this exact JSON format (no additional text or formatting):
       {
-        "analysis": "detailed analysis here",
-        "statistics": [
-          {
-            "value": "extracted numerical data",
-            "metric": "what is being measured",
-            "context": "why this is important",
-            "source": "paper title"
-          }
-        ],
-        "questions": [
-          "specific follow-up question 1",
-          "specific follow-up question 2"
-        ]
+        "analysis": "your analysis here",
+        "statistics": [{"value": "stat", "metric": "measure", "context": "importance", "source": "paper"}],
+        "questions": ["question 1", "question 2"]
       }`;
 
-      const response = await this.model.invoke(researchPrompt + "\n\n" + 
+      const response = await this.model.invoke(researchPrompt + "\n\nPapers:\n" + 
         papers.map(paper => `Title: ${paper.title}\nAuthors: ${paper.authors.join(', ')}\nSummary: ${paper.summary}`).join('\n\n')
       );
 
-      // Parse the model's response
-      const analysisResult = JSON.parse(sanitizeJsonString(response.text));
+      let analysisResult;
+      try {
+        // Clean and parse the response
+        const cleanedResponse = sanitizeJsonString(response.text);
+        analysisResult = JSON.parse(cleanedResponse);
+      } catch (parseError) {
+        console.error('Parse error:', parseError);
+        // Fallback if parsing fails
+        analysisResult = {
+          analysis: response.text,
+          statistics: [],
+          questions: []
+        };
+      }
 
       // Return complete research results
       return {
-        summary: papers.map(p => p.summary).join('\n\n'),
+        summary: analysisResult.analysis || papers.map(p => p.summary).join('\n\n'),
         findings: papers.map(paper => ({
           title: paper.title,
           content: paper.summary,
@@ -195,19 +198,8 @@ export class AcademicResearchAgent {
           explanation: paper.summary,
           supportingEvidence: [paper.authors.join(', '), paper.published]
         })),
-        statistics: analysisResult.statistics || [
-          {
-            value: "N/A",
-            metric: "Publication Count",
-            context: "Number of papers analyzed",
-            source: "Research Analysis"
-          }
-        ],
-        suggestedQuestions: analysisResult.questions || [
-          "What are the latest developments in this field?",
-          "How does this compare to other approaches?",
-          "What are the practical applications of this research?"
-        ],
+        statistics: analysisResult.statistics || [],
+        suggestedQuestions: analysisResult.questions || [],
         metadata: {
           sourcesCount: papers.length,
           confidence: 0.9,
@@ -215,7 +207,6 @@ export class AcademicResearchAgent {
           lastUpdated: new Date().toISOString()
         }
       };
-
     } catch (error) {
       console.error('Academic research error:', error);
       throw error;
