@@ -1439,4 +1439,27 @@ export class ResearchAgent {
     // Take the top 3 most relevant examples
     return scoredExamples.slice(0, 3).map(item => item.example);
   }
+
+  // Add timeout handling to your API calls with proper error typing
+  private async performResearch(query: string) {
+    try {
+      // Set a reasonable timeout for API calls
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+      
+      // Use the signal in your API calls
+      const response = await this.model.invoke(query, {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Request timed out');
+        return { content: "The request took too long to process. Please try a more specific query." };
+      }
+      throw error;
+    }
+  }
 } 
