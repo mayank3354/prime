@@ -162,7 +162,7 @@ export class ResearchAgent {
       });
     } else {
       this.model = new ChatGoogleGenerativeAI({
-        modelName: "gemini-1.5-pro",
+        modelName: "gemini-2.0-flash",
         apiKey: process.env.GOOGLE_API_KEY!,
         temperature: 0.3,
         maxOutputTokens: 8192,
@@ -170,7 +170,7 @@ export class ResearchAgent {
 
       this.embeddings = new GoogleGenerativeAIEmbeddings({
         apiKey: process.env.GOOGLE_API_KEY!,
-        modelName: "embedding-001",
+        modelName: "text-embedding-004",
         
       });
     }

@@ -85,7 +85,7 @@ export class AcademicResearchAgent {
   constructor(statusCallback?: StatusCallback) {
     this.statusCallback = statusCallback;
     this.model = new ChatGoogleGenerativeAI({
-      modelName: "gemini-pro",
+      modelName: "gemini-2.0-flash",
       apiKey: process.env.GOOGLE_API_KEY!,
       temperature: 0.3,
     });
@@ -93,7 +93,7 @@ export class AcademicResearchAgent {
     // Initialize embeddings
     const embeddings = new GoogleGenerativeAIEmbeddings({
       apiKey: process.env.GOOGLE_API_KEY!,
-      modelName: "embedding-001",
+      modelName: "text-embedding-004",
       
     });
 
