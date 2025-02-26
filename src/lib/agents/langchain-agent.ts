@@ -18,6 +18,7 @@ import { StringOutputParser } from "@langchain/core/output_parsers";
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
 import { ChatOllama } from "@langchain/community/chat_models/ollama";
 import { OllamaEmbeddings } from "@langchain/community/embeddings/ollama";
+import { MessageContent } from "@langchain/core/messages";
 
 function sanitizeJsonString(str: string): string {
   return str
@@ -47,6 +48,12 @@ interface CodeExample {
 interface CodeBlock {
   language: string;
   code: string;
+}
+
+// Add this interface near your other interfaces
+interface TextContent {
+  text?: string;
+  content?: string;
 }
 
 // // Add interface for search result structure
@@ -1338,13 +1345,16 @@ export class ResearchAgent {
     const text = typeof content === 'string' 
       ? content 
       : Array.isArray(content) 
-        ? content.map(item => item.text || item.content || '').join('\n')
-        : content?.text || content?.content || '';
+        ? content.map(item => {
+            if (typeof item === 'string') return item;
+            return (item as TextContent).text || (item as TextContent).content || '';
+          }).join('\n')
+        : ((content as TextContent)?.text || (content as TextContent)?.content || '');
     
     const examples: CodeExample[] = [];
     
     // Pattern to match the template format
-    const examplePattern = /EXAMPLE TITLE:\s*(.+?)\s*LANGUAGE:\s*(.+?)\s*```(.+?)```\s*DESCRIPTION:\s*(.+?)(?=EXAMPLE TITLE:|$)/gis;
+    const examplePattern = /EXAMPLE TITLE:\s*(.+?)\s*LANGUAGE:\s*(.+?)\s*```([\s\S]+?)```\s*DESCRIPTION:\s*(.+?)(?=EXAMPLE TITLE:|$)/gi;
     
     let match;
     while ((match = examplePattern.exec(text)) !== null) {
