@@ -9,6 +9,9 @@ import * as cheerio from 'cheerio';
 import { PdfReader } from 'pdfreader';
 import type { ItemHandler } from 'pdfreader';
 import { ResearchStatus, StatusCallback } from "@/types/research";
+import { StructuredOutputParser } from "langchain/output_parsers";
+import { z } from "zod";
+
 // function sanitizeJsonString(str: string): string {
 //   return str
 //     // Remove markdown formatting
@@ -75,6 +78,33 @@ interface GitHubRepo {
   stargazers_count: number;
   language: string;
 }
+
+// Define a schema for your output
+const outputSchema = z.object({
+  analysis: z.string().describe("A detailed analysis of the papers"),
+  statistics: z.array(
+    z.object({
+      value: z.string(),
+      metric: z.string(),
+      context: z.string()
+    })
+  ),
+  questions: z.array(z.string()),
+  codeExamples: z.array(
+    z.object({
+      title: z.string(),
+      language: z.string(),
+      code: z.string(),
+      description: z.string(),
+      source: z.string().default("Generated example")
+    })
+  ),
+  methodology: z.object({
+    approach: z.string(),
+    implementation: z.string(),
+    evaluation: z.string()
+  })
+});
 
 export class AcademicResearchAgent {
   private model: ChatGoogleGenerativeAI;
@@ -209,6 +239,21 @@ export class AcademicResearchAgent {
       .substring(0, 1000); // Limit length
   }
 
+  private sanitizeJsonString(str: string): string {
+    return str
+      // Remove markdown formatting
+      .replace(/```json/g, '')
+      .replace(/```/g, '')
+      // Fix escaped quotes
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'")
+      // Fix unescaped quotes within strings
+      .replace(/"([^"]*)":/g, (match) => match.replace(/"/g, '\\"'))
+      // Remove control characters
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+      .trim();
+  }
+
   private async processAndEmbedPapers(papers: ArxivPaper[]): Promise<Document[]> {
     this.updateStatus({
       stage: 'processing',
@@ -271,94 +316,44 @@ export class AcademicResearchAgent {
     return documents;
   }
 
-  private async performRAGSearch(query: string, ): Promise<RAGResponse> {
+  private async performRAGSearch(query: string): Promise<RAGResponse> {
     try {
       const relevantDocs = await this.vectorStore.similaritySearch(query, 5);
-      const isCodeQuery = query.toLowerCase().includes('code') || 
-                         query.toLowerCase().includes('implementation') ||
-                         query.toLowerCase().includes('example');
       
-      // Different prompts based on query type
-      const ragPrompt = isCodeQuery ? 
-        `Based on the following research context, provide code examples and explanation for "${query}".
-        If no direct code implementation is found, explain why and provide a theoretical summary instead.
-
-        Research Context:
-        ${relevantDocs.map(doc => doc.pageContent).join('\n')}
-
-        Format your response as follows:
-        {
-          "analysis": "Brief explanation of the concept",
-          "hasCode": boolean,
-          "codeExamples": [
-            {
-              "title": "What this code demonstrates",
-              "language": "programming language",
-              "code": "Complete implementation",
-              "description": "Detailed explanation of how the code works",
-              "source": "Reference source"
-            }
-          ]
-        }`
-        :
-        `Provide a comprehensive summary of the research about "${query}".
-
-        Research Context:
-        ${relevantDocs.map(doc => doc.pageContent).join('\n')}
-
-        Format your response as:
-        {
-          "analysis": "Detailed analysis of the research",
-          "hasCode": false,
-          "keyPoints": ["Main finding 1", "Main finding 2"]
-        }`;
-
-      const response = await this.model.invoke(ragPrompt);
+      // Create a parser
+      const parser = StructuredOutputParser.fromZodSchema(outputSchema);
+      const formatInstructions = parser.getFormatInstructions();
       
-      try {
-        const cleanedResponse = this.sanitizeText(response.text)
-          .replace(/```\w*\n?|```/g, '');
-        const parsed = JSON.parse(cleanedResponse);
-
-        if (!parsed.hasCode) {
-          return {
-            analysis: parsed.analysis,
-            statistics: [],
-            questions: [],
-            codeExamples: [],
-            methodology: {
-              approach: parsed.keyPoints?.join('\n') || "Not available",
-              implementation: "Not available",
-              evaluation: "Not available"
-            }
-          };
-        }
-
-        // Format code examples if they exist
-        const formattedExamples = (parsed.codeExamples || []).map((example: CodeExample) => ({
-          ...example,
-          code: this.formatCodeExample(example.code)
-        }));
-
-        return {
-          analysis: parsed.analysis,
-          statistics: [],
-          questions: [],
-          codeExamples: formattedExamples,
-          methodology: {
-            approach: "See code implementation",
-            implementation: "Provided in code examples",
-            evaluation: "See code examples"
-          }
-        };
-
-      } catch (parseError) {
-        console.error('Parse error:', parseError);
-        return this.getFallbackResponse(response.text);
-      }
+      // Create a prompt with format instructions
+      const prompt = `
+        Based on the following academic papers and the query "${query}", provide a comprehensive analysis.
+        
+        Papers:
+        ${relevantDocs.map(doc => `- ${doc.pageContent}`).join('\n')}
+        
+        ${formatInstructions}
+      `;
+      
+      // Get response from model
+      const response = await this.model.invoke(prompt);
+      const responseText = response.content.toString();
+      
+      // Parse the response
+      return await parser.parse(responseText);
     } catch (error) {
-      console.error('RAG search error:', error);
-      throw error;
+      console.error("RAG search error:", error);
+      // Return fallback response
+      return {
+        analysis: "Error processing research results.",
+        statistics: [],
+        questions: [],
+        codeExamples: [],
+        methodology: {
+          approach: "Not available",
+          implementation: "Not available",
+          evaluation: "Not available"
+        }
+      };
     }
   }
 
