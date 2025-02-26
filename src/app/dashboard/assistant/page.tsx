@@ -4,15 +4,31 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { PlusIcon, MagnifyingGlassIcon, ChartBarIcon, LinkIcon, QuestionMarkCircleIcon} from '@heroicons/react/24/outline';
 //import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Book, CheckCircle, ExternalLink, SaveIcon, Clock, Loader, Globe, BookOpen } from 'lucide-react';
+import { Sparkles, Book, CheckCircle, ExternalLink, SaveIcon, Clock, Loader, Globe, BookOpen, Code } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 // import Link from 'next/link';
 // import { Button } from "@/components/ui/button";
-import Image from 'next/image';
+//import Image from 'next/image';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Search } from "lucide-react";
 import { debounce } from 'lodash';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { tomorrow } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { ClipboardIcon } from '@heroicons/react/24/outline';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell
+} from 'recharts';
 
 interface ResearchResult {
   summary: string;
@@ -49,6 +65,13 @@ interface ResearchResult {
     context: string;
     source: string;
   }>;
+  codeExamples?: Array<{
+    title: string;
+    language: string;
+    code: string;
+    description: string;
+    source: string;
+  }>;
 }
 
 interface ResearchStatus {
@@ -60,19 +83,56 @@ interface ResearchStatus {
   };
 }
 
-const ResearchResultView = ({ result, query, onSave }: { result: ResearchResult; query: string; onSave: () => void }) => {
+interface CodeExample {
+  title: string;
+  language: 'python' | 'javascript' | 'typescript' | string;
+  code: string;
+  description: string;
+  source: string;
+}
+
+interface ResearchResultViewProps {
+  result: ResearchResult | null;
+  query: string;
+  onSave: () => void;
+}
+
+const ResearchResultView = ({ result, query, onSave }: ResearchResultViewProps) => {
+  const [isSaving, setIsSaving] = useState(false);
+
+  if (!result) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-gray-600 dark:text-gray-400">No results available</p>
+      </div>
+    );
+  }
+
+  const findings = result.findings || [];
+ // const hasCodeExamples = result.codeExamples && result.codeExamples.length > 0;
+  
+  // Add colors for charts
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+  
+  // Format statistics data for charts if available
+  const chartData = result.statistics?.map((stat, index) => ({
+    name: stat.metric,
+    value: parseFloat(stat.value) || index + 1, // Try to parse as number, fallback to index
+    description: stat.context,
+    source: stat.source
+  }));
+
   return (
     <div className="space-y-8 max-w-4xl mx-auto">
       {/* Query Heading */}
       <div className="text-center">
         <h1 className="text-3xl md:text-4xl font-bold text-gray-800 dark:text-gray-100 mb-2">
           {query}
-          
         </h1>
         <div className="w-20 h-1 bg-blue-500 mx-auto rounded-full mb-8"></div>
       </div>
 
-      {/* Summary Section with Enhanced Styling */}
+      {/* Summary Section */}
       <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-lg border border-gray-100 dark:border-gray-700">
         <div className="flex items-center gap-3 mb-6">
           <Sparkles className="h-6 w-6 text-blue-500" />
@@ -87,116 +147,241 @@ const ResearchResultView = ({ result, query, onSave }: { result: ResearchResult;
         <div className="mt-6 flex flex-wrap gap-4">
           <Badge variant="secondary" className="px-4 py-2">
             <Book className="h-4 w-4 mr-2" />
-            {result.findings.length} Companies Analyzed
+            {findings.length} Companies Analyzed
           </Badge>
           <Badge variant="secondary" className="px-4 py-2">
             <CheckCircle className="h-4 w-4 mr-2" />
-            {Math.round(result.metadata.confidence * 100)}% Confidence
+            {Math.round((result.metadata?.confidence || 0) * 100)}% Confidence
           </Badge>
           <Badge variant="secondary" className="px-4 py-2">
             <Clock className="h-4 w-4 mr-2" />
-            {result.metadata.researchDepth} Analysis
+            {result.metadata?.researchDepth || 'Basic'} Analysis
           </Badge>
         </div>
       </div>
 
-      {/* Startup Profiles Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {result.findings.map((finding, index) => (
-          <div key={index} className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-100 dark:border-gray-700">
-            <h3 className="text-xl font-bold mb-4">{finding.title}</h3>
-            <div className="prose dark:prose-invert max-w-none">
-              <p className="text-gray-700 dark:text-gray-300">{finding.content}</p>
-            </div>
-            <div className="mt-4 flex items-center justify-between">
-              <Badge variant={
-                finding.relevance === 'High' ? 'success' : 
-                finding.relevance === 'Medium' ? 'warning' : 'default'
-              }>
-                {finding.relevance} Relevance
-              </Badge>
-              <a 
-                href={finding.source}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:text-blue-600 flex items-center gap-1"
-              >
-                <span>Source</span>
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Visual Insights with Enhanced Layout */}
-      {result.visualData && result.visualData.length > 0 && (
+      {/* Code Examples Section */}
+      {result.codeExamples && result.codeExamples.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-lg border border-gray-100 dark:border-gray-700">
-          <h3 className="text-xl font-bold mb-6">Visual Insights</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {result.visualData.map((visual, index) => (
-              <div key={index} className="rounded-lg overflow-hidden">
-                <Image 
-                  src={visual.url} 
-                  alt={visual.caption}
-                  width={800}
-                  height={600}
-                  className="w-full h-64 object-cover rounded-lg"
-                />
-                <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
-                  {visual.caption}
-                </p>
-              </div>
+          <div className="flex items-center gap-3 mb-6">
+            <Code className="h-6 w-6 text-blue-500" />
+            <h2 className="text-2xl font-bold">Code Examples</h2>
+          </div>
+          <div className="space-y-6">
+            {result.codeExamples.map((example, index) => (
+              <CodeExampleView key={index} example={example} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Findings Grid */}
+      {findings.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {findings.map((finding, index) => (
+            <div key={index} className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-100 dark:border-gray-700">
+              <h3 className="text-xl font-bold mb-4">{finding.title}</h3>
+              <div className="prose dark:prose-invert max-w-none">
+                <p className="text-gray-700 dark:text-gray-300">{finding.content}</p>
+              </div>
+              <div className="mt-4 flex items-center justify-between">
+                <Badge variant={
+                  finding.relevance === 'High' ? 'success' : 
+                  finding.relevance === 'Medium' ? 'warning' : 'default'
+                }>
+                  {finding.relevance} Relevance
+                </Badge>
+                {finding.source && (
+                  <a 
+                    href={finding.source}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 hover:text-blue-600 flex items-center gap-1"
+                  >
+                    <span>Source</span>
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
       {/* Statistics Section */}
       {result.statistics && result.statistics.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-6">
+          <h2 className="text-2xl font-bold mb-4 flex items-center">
+            <ChartBarIcon className="h-6 w-6 mr-2 text-blue-500" />
+            Statistics & Data
+          </h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Statistics List */}
+            <div className="space-y-4">
+              {result.statistics.map((stat, index) => (
+                <div key={index} className="border-l-4 border-blue-500 pl-4 py-2">
+                  <div className="font-bold text-lg">{stat.value} <span className="text-gray-500 text-sm">{stat.metric}</span></div>
+                  <p className="text-gray-600 dark:text-gray-400 text-sm">{stat.context}</p>
+                  {stat.source && (
+                    <div className="text-xs text-gray-500 mt-1 flex items-center">
+                      <LinkIcon className="h-3 w-3 mr-1" />
+                      Source: {stat.source}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            
+            {/* Charts */}
+            <div className="h-80 flex items-center justify-center">
+              {chartData && chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  {chartData.length <= 3 ? (
+                    <PieChart>
+                      <Pie
+                        data={chartData}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value, name) => [value, name]} />
+                      <Legend />
+                    </PieChart>
+                  ) : (
+                    <BarChart
+                      data={chartData}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="value" fill="#8884d8" />
+                    </BarChart>
+                  )}
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-gray-500 text-center">
+                  Not enough numerical data for visualization
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Follow-up Questions */}
+      {result.suggestedQuestions && result.suggestedQuestions.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-lg border border-gray-100 dark:border-gray-700">
-          <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-            <ChartBarIcon className="h-6 w-6 text-blue-500" />
-            Key Statistics
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {result.statistics.map((stat, index) => (
-              <div key={index} className="bg-gray-50 dark:bg-gray-700 rounded-lg p-6">
-                <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
-                  {stat.value}
-                </div>
-                <div className="text-sm font-medium text-gray-600 dark:text-gray-400 mt-2">
-                  {stat.metric}
-                </div>
-                <p className="mt-3 text-sm text-gray-500 dark:text-gray-300">
-                  {stat.context}
-                </p>
-                {stat.source && (
-                  <a 
-                    href={stat.source}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 text-blue-500 hover:text-blue-600 text-sm flex items-center gap-1"
-                  >
-                    <LinkIcon className="h-4 w-4" />
-                    Source
-                  </a>
-                )}
-              </div>
+          <h3 className="text-xl font-semibold mb-6">Suggested Follow-up Questions</h3>
+          <div className="space-y-4">
+            {result.suggestedQuestions.map((question, index) => (
+              <button
+                key={index}
+                onClick={() => window.location.href = `/dashboard/assistant?q=${encodeURIComponent(question)}`}
+                className="w-full text-left p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors flex items-center gap-3"
+              >
+                <QuestionMarkCircleIcon className="h-5 w-5 text-blue-500" />
+                <span>{question}</span>
+              </button>
             ))}
           </div>
         </div>
       )}
 
-      {/* Save Button - Now appears at the bottom of content */}
-      <div className="flex justify-center py-8">
+      {/* Save Button */}
+      <div className="flex justify-center pt-4">
         <button
-          onClick={onSave}
-          className="bg-blue-600 text-white rounded-lg px-6 py-3 shadow-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+          onClick={() => {
+            setIsSaving(true);
+            onSave();
+            setTimeout(() => setIsSaving(false), 1000);
+          }}
+          disabled={isSaving}
+          className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
         >
-          <SaveIcon className="h-5 w-5" />
-          <span>Save Research</span>
+          {isSaving ? (
+            <>
+              <Loader className="h-5 w-5 animate-spin" />
+              <span>Saving...</span>
+            </>
+          ) : (
+            <>
+              <SaveIcon className="h-5 w-5" />
+              <span>Save Research</span>
+            </>
+          )}
         </button>
+      </div>
+
+      <ToastContainer position="bottom-right" />
+    </div>
+  );
+};
+
+const CodeExampleView = ({ example }: { example: CodeExample }) => {
+  return (
+    <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg overflow-hidden">
+      <div className="p-4">
+        <h3 className="text-lg font-medium mb-2">{example.title}</h3>
+        <p className="text-gray-600 dark:text-gray-400 mb-4">
+          {example.description}
+        </p>
+      </div>
+
+      <div className="relative">
+        {/* Language Header */}
+        <div className="bg-gray-100 dark:bg-gray-700 px-4 py-2 font-mono text-sm text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-600">
+          {example.language}
+        </div>
+
+        <div className="absolute right-2 top-2 z-10">
+          <button
+            onClick={() => navigator.clipboard.writeText(example.code)}
+            className="p-2 bg-gray-800/10 hover:bg-gray-800/20 rounded-md transition-colors"
+            title="Copy code"
+          >
+            <ClipboardIcon className="h-5 w-5" />
+          </button>
+        </div>
+
+        <SyntaxHighlighter
+          language={example.language.toLowerCase()}
+          style={tomorrow}
+          customStyle={{
+            margin: 0,
+            padding: '1.5rem',
+            fontSize: '0.9rem',
+            lineHeight: 1.5,
+            borderRadius: '0'
+          }}
+          showLineNumbers={true}
+          wrapLines={true}
+        >
+          {example.code}
+        </SyntaxHighlighter>
+      </div>
+
+      <div className="p-4 border-t border-gray-100 dark:border-gray-700">
+        <a 
+          href={example.source}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-blue-500 hover:text-blue-600 flex items-center gap-1"
+        >
+          <LinkIcon className="h-4 w-4" />
+          <span>View source</span>
+        </a>
       </div>
     </div>
   );
@@ -211,7 +396,7 @@ export default function ResearchAssistant() {
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [searchMode, setSearchMode] = useState<'web' | 'academic'>('web');
-  const [, setIsSaving] = useState(false);
+ // const [, setIsSaving] = useState(false);
   const [, setShowApiKeyModal] = useState(false);
   const [status, setStatus] = useState<ResearchStatus | null>(null);
   const supabase = createClientComponentClient();
@@ -364,51 +549,31 @@ export default function ResearchAssistant() {
     handleSearch({ preventDefault: () => {} } as React.FormEvent);
   };
 
-  // const handleSaveResearch = async () => {
-  //   if (!result) return;
-
-  //   setIsSaving(true);
-  //   try {
-  //     // Get stored API key
-  //     const apiKey = localStorage.getItem('research_api_key');
-  //     if (!apiKey) {
-  //       throw new Error('API key not found');
-  //     }
-
-  //     console.log('Saving research data:', {
-  //       query,
-  //       summary: result.summary,
-  //       findings: result.findings,
-  //       metadata: result.metadata
-  //     });
-
-  //     const response = await fetch('/api/research/save', {
-  //       method: 'POST',
-  //       headers: {
-  //         'Content-Type': 'application/json',
-  //         'x-api-key': apiKey
-  //       },
-  //       body: JSON.stringify({
-  //         query,
-  //         summary: result.summary,
-  //         findings: result.findings,
-  //         metadata: result.metadata
-  //       })
-  //     });
-
-  //     if (!response.ok) {
-  //       const error = await response.json();
-  //       throw new Error(error.message || 'Failed to save research');
-  //     }
-
-  //     toast.success('Research saved successfully!');
-  //   } catch (error) {
-  //     console.error('Save error:', error);
-  //     toast.error(error instanceof Error ? error.message : 'Failed to save research');
-  //   } finally {
-  //     setIsSaving(false);
-  //   }
-  // };
+  const handleSave = async () => {
+    if (!result) {
+      toast.error("No research results to save");
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/research/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: query,
+          research: result
+        }),
+      });
+      
+      if (!response.ok) throw new Error('Failed to save research');
+      toast.success('Research saved successfully!');
+    } catch (error) {
+      console.error('Save error:', error);
+      toast.error('Failed to save research');
+    }
+  };
 
   return (
     <div className="container mx-auto px-4 py-8 relative min-h-screen">
@@ -532,7 +697,7 @@ export default function ResearchAssistant() {
             <ResearchResultView 
               result={result}
               query={query}
-              onSave={() => setShowSaveDialog(true)} 
+              onSave={handleSave} 
             />
 
             {/* Follow-up Questions Section */}
@@ -612,43 +777,7 @@ export default function ResearchAssistant() {
                 Cancel
               </button>
               <button
-                onClick={async () => {
-                  setIsSaving(true);
-                  try {
-                    const response = await fetch('/api/research/save', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'x-api-key': localStorage.getItem('research_api_key') || '',
-                      },
-                      body: JSON.stringify({
-                        query,
-                        research: {
-                          query,
-                          summary: result?.summary,
-                          findings: result?.findings,
-                          keyInsights: result?.keyInsights,
-                          statistics: result?.statistics,
-                          metadata: result?.metadata
-                        }
-                      }),
-                    });
-
-                    const data = await response.json();
-
-                    if (!response.ok) {
-                      throw new Error(data.message || 'Failed to save research');
-                    }
-
-                    toast.success('Research saved successfully!');
-                    setShowSaveDialog(false);
-                  } catch (error) {
-                    console.error('Save error:', error);
-                    toast.error(error instanceof Error ? error.message : 'Failed to save research');
-                  } finally {
-                    setIsSaving(false);
-                  }
-                }}
+                onClick={handleSave}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
                 disabled={isLoading}
               >

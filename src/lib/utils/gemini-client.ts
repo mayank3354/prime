@@ -10,7 +10,7 @@ export const getGeminiClient = () => {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     return genAI.getGenerativeModel({ 
-      model: "gemini-pro",
+      model: "gemini-1.5-pro",
       generationConfig: {
         temperature: 0.7,
         topP: 1,

@@ -2,36 +2,61 @@ import { NextResponse } from 'next/server';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 
-
 export async function POST(request: Request) {
   try {
-    const supabase = createRouteHandlerClient({ cookies });
+    const { query, research } = await request.json();
     
-    // Get current session
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    // Debug the incoming data
+    console.log('Saving research data:', JSON.stringify({
+      query,
+      researchKeys: research ? Object.keys(research) : 'research is undefined',
+      researchType: research ? typeof research : 'undefined'
+    }));
+    
+    if (!query || !research) {
+      return NextResponse.json(
+        { message: 'Query and research data are required' },
+        { status: 400 }
+      );
     }
 
-    const { query, research } = await request.json();
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data: { session } } = await supabase.auth.getSession();
 
-    // Save to research_reports table
+    if (!session) {
+      return NextResponse.json(
+        { message: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    // Create a sanitized version of the research data with fallbacks
+    const sanitizedResearch = {
+      summary: typeof research.summary === 'string' ? research.summary : '',
+      findings: Array.isArray(research.findings) ? research.findings : [],
+      key_insights: Array.isArray(research.keyInsights) ? research.keyInsights : [],
+      statistics: Array.isArray(research.statistics) ? research.statistics : [],
+      code_examples: Array.isArray(research.codeExamples) ? research.codeExamples : [],
+      suggested_questions: Array.isArray(research.suggestedQuestions) ? research.suggestedQuestions : [],
+      metadata: research.metadata || {}
+    };
+
+    // Insert research report with sanitized data
     const { data, error } = await supabase
       .from('research_reports')
       .insert({
         user_id: session.user.id,
         query: query,
-        summary: research.summary,
-        findings: research.findings,
-        key_insights: research.keyInsights,
-        statistics: research.statistics || [],
-        suggested_questions: research.suggestedQuestions || [],
-        metadata: research.metadata,
-        created_at: new Date().toISOString(),
-        mode: research.mode || 'web' // 'web' or 'academic'
+        summary: sanitizedResearch.summary,
+        findings: sanitizedResearch.findings,
+        key_insights: sanitizedResearch.key_insights,
+        statistics: sanitizedResearch.statistics,
+        code_examples: sanitizedResearch.code_examples,
+        suggested_questions: sanitizedResearch.suggested_questions,
+        metadata: sanitizedResearch.metadata,
+        created_at: new Date().toISOString()
       })
-      .select()
-      .single();
+      .select();
 
     if (error) {
       console.error('Save error:', error);
@@ -41,15 +66,14 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({
+    return NextResponse.json({ 
       message: 'Research saved successfully',
-      report: data
+      data 
     });
-
   } catch (error) {
     console.error('Save handler error:', error);
     return NextResponse.json(
-      { message: 'Failed to save research', error: error instanceof Error ? error.message : 'Unknown error' },
+      { message: 'An error occurred', error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
