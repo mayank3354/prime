@@ -29,6 +29,7 @@ import {
   Pie,
   Cell
 } from 'recharts';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 interface ResearchResult {
   summary: string;
@@ -95,9 +96,10 @@ interface ResearchResultViewProps {
   result: ResearchResult | null;
   query: string;
   onSave: () => void;
+  onFollowUp: (question: string) => void;
 }
 
-const ResearchResultView = ({ result, query, onSave }: ResearchResultViewProps) => {
+const ResearchResultView = ({ result, query, onSave, onFollowUp }: ResearchResultViewProps) => {
   const [isSaving, setIsSaving] = useState(false);
 
   if (!result) {
@@ -123,66 +125,56 @@ const ResearchResultView = ({ result, query, onSave }: ResearchResultViewProps) 
   }));
 
   return (
-    <div className="space-y-8 max-w-4xl mx-auto">
-      {/* Query Heading */}
-      <div className="text-center">
-        <h1 className="text-3xl md:text-4xl font-bold text-gray-800 dark:text-gray-100 mb-2">
-          {query}
-        </h1>
-        <div className="w-20 h-1 bg-blue-500 mx-auto rounded-full mb-8"></div>
-      </div>
-
-      {/* Summary Section */}
+    <div className="space-y-8">
+      {/* Summary Section - Make it more prominent */}
       <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-lg border border-gray-100 dark:border-gray-700">
-        <div className="flex items-center gap-3 mb-6">
-          <Sparkles className="h-6 w-6 text-blue-500" />
-          <h2 className="text-2xl font-bold">Research Summary</h2>
-        </div>
+        <h2 className="text-2xl font-bold mb-6">Understanding: {query}</h2>
         <div className="prose dark:prose-invert max-w-none">
-          <p className="text-lg leading-relaxed text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-            {result.summary}
-          </p>
-        </div>
-        
-        <div className="mt-6 flex flex-wrap gap-4">
-          <Badge variant="secondary" className="px-4 py-2">
-            <Book className="h-4 w-4 mr-2" />
-            {findings.length} Companies Analyzed
-          </Badge>
-          <Badge variant="secondary" className="px-4 py-2">
-            <CheckCircle className="h-4 w-4 mr-2" />
-            {Math.round((result.metadata?.confidence || 0) * 100)}% Confidence
-          </Badge>
-          <Badge variant="secondary" className="px-4 py-2">
-            <Clock className="h-4 w-4 mr-2" />
-            {result.metadata?.researchDepth || 'Basic'} Analysis
-          </Badge>
+          {result.summary.split('\n\n').map((paragraph, i) => (
+            paragraph.trim() ? (
+              <p key={i} className="mb-4">
+                <FormattedText text={paragraph} />
+              </p>
+            ) : null
+          ))}
         </div>
       </div>
-
-      {/* Code Examples Section */}
-      {result.codeExamples && result.codeExamples.length > 0 && (
+      
+      {/* Key Insights - Display as steps if possible */}
+      {result.keyInsights && result.keyInsights.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-lg border border-gray-100 dark:border-gray-700">
-          <div className="flex items-center gap-3 mb-6">
-            <Code className="h-6 w-6 text-blue-500" />
-            <h2 className="text-2xl font-bold">Code Examples</h2>
-          </div>
+          <h3 className="text-xl font-semibold mb-6">Key Steps & Insights</h3>
           <div className="space-y-6">
-            {result.codeExamples.map((example, index) => (
-              <CodeExampleView key={index} example={example} />
+            {result.keyInsights.map((insight, index) => (
+              <div key={index} className="flex gap-4">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-blue-600 dark:text-blue-300 font-bold">
+                  {index + 1}
+                </div>
+                <div>
+                  <h4 className="font-medium text-lg mb-2">{insight.point}</h4>
+                  <p className="text-gray-600 dark:text-gray-300 mb-3">{insight.explanation}</p>
+                  {insight.supportingEvidence && insight.supportingEvidence.length > 0 && (
+                    <ul className="list-disc pl-5 space-y-1 text-gray-600 dark:text-gray-300">
+                      {insight.supportingEvidence.map((evidence, i) => (
+                        <li key={i}>{evidence}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         </div>
       )}
-
+      
       {/* Findings Grid */}
       {findings.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {findings.map((finding, index) => (
             <div key={index} className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-100 dark:border-gray-700">
-              <h3 className="text-xl font-bold mb-4">{finding.title}</h3>
+              <h3 className="text-xl font-bold mb-4">{finding.title || 'Untitled Finding'}</h3>
               <div className="prose dark:prose-invert max-w-none">
-                <p className="text-gray-700 dark:text-gray-300">{finding.content}</p>
+                <p className="text-gray-700 dark:text-gray-300">{finding.content || 'No content available'}</p>
               </div>
               <div className="mt-4 flex items-center justify-between">
                 <Badge variant={
@@ -288,7 +280,7 @@ const ResearchResultView = ({ result, query, onSave }: ResearchResultViewProps) 
             {result.suggestedQuestions.map((question, index) => (
               <button
                 key={index}
-                onClick={() => window.location.href = `/dashboard/assistant?q=${encodeURIComponent(question)}`}
+                onClick={() => onFollowUp(question)}
                 className="w-full text-left p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors flex items-center gap-3"
               >
                 <QuestionMarkCircleIcon className="h-5 w-5 text-blue-500" />
@@ -324,66 +316,258 @@ const ResearchResultView = ({ result, query, onSave }: ResearchResultViewProps) 
         </button>
       </div>
 
+      {/* Code Examples */}
+      {result.codeExamples && result.codeExamples.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-lg border border-gray-100 dark:border-gray-700">
+          <h3 className="text-xl font-semibold mb-6">Code Examples</h3>
+          <div className="space-y-6">
+            {result.codeExamples.map((example, index) => (
+              <CodeExampleView key={index} example={example} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <ToastContainer position="bottom-right" />
     </div>
   );
 };
 
 const CodeExampleView = ({ example }: { example: CodeExample }) => {
+  const [copied, setCopied] = useState(false);
+  
+  if (!example) {
+    return <div className="p-4 border rounded-md">No code example available</div>;
+  }
+  
+  const handleCopy = () => {
+    navigator.clipboard.writeText(example.code || '');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  
+  // Process code to handle markdown-style code blocks
+  const processCode = (code: string = '') => {
+    if (!code) return '';
+    
+    // If the code contains markdown-style code blocks, extract just the code
+    if (code.includes('```')) {
+      const codeBlockMatch = code.match(/```(?:(\w+))?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        // If we found a language in the code block, update the example language
+        if (codeBlockMatch[1] && !example.language) {
+          example.language = codeBlockMatch[1];
+        }
+        return codeBlockMatch[2].trim();
+      }
+    }
+    return code;
+  };
+  
+  const processedCode = processCode(example.code);
+  const language = example.language || 'text';
+  
   return (
-    <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg overflow-hidden">
-      <div className="p-4">
-        <h3 className="text-lg font-medium mb-2">{example.title}</h3>
-        <p className="text-gray-600 dark:text-gray-400 mb-4">
-          {example.description}
-        </p>
-      </div>
-
+    <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+      {example.title && (
+        <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+          <h4 className="font-medium text-sm">{example.title}</h4>
+        </div>
+      )}
+      
       <div className="relative">
-        {/* Language Header */}
-        <div className="bg-gray-100 dark:bg-gray-700 px-4 py-2 font-mono text-sm text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-600">
-          {example.language}
-        </div>
-
-        <div className="absolute right-2 top-2 z-10">
-          <button
-            onClick={() => navigator.clipboard.writeText(example.code)}
-            className="p-2 bg-gray-800/10 hover:bg-gray-800/20 rounded-md transition-colors"
-            title="Copy code"
-          >
-            <ClipboardIcon className="h-5 w-5" />
-          </button>
-        </div>
-
-        <SyntaxHighlighter
-          language={example.language.toLowerCase()}
+        <SyntaxHighlighter 
+          language={language} 
           style={tomorrow}
           customStyle={{
             margin: 0,
-            padding: '1.5rem',
-            fontSize: '0.9rem',
-            lineHeight: 1.5,
-            borderRadius: '0'
+            padding: '1rem',
+            maxHeight: '24rem',
+            fontSize: '0.875rem',
+            backgroundColor: '#f8f9fa', // Light mode background
+            borderRadius: 0
           }}
-          showLineNumbers={true}
-          wrapLines={true}
+          codeTagProps={{
+            style: {
+              fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
+            }
+          }}
         >
-          {example.code}
+          {processedCode}
         </SyntaxHighlighter>
-      </div>
-
-      <div className="p-4 border-t border-gray-100 dark:border-gray-700">
-        <a 
-          href={example.source}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-blue-500 hover:text-blue-600 flex items-center gap-1"
+        
+        <button
+          onClick={handleCopy}
+          className="absolute top-2 right-2 p-1.5 bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 rounded-md shadow-sm border border-gray-200 dark:border-gray-700"
+          aria-label="Copy code"
         >
-          <LinkIcon className="h-4 w-4" />
-          <span>View source</span>
-        </a>
+          {copied ? (
+            <CheckCircle className="h-4 w-4 text-green-500" />
+          ) : (
+            <ClipboardIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+          )}
+        </button>
+      </div>
+      
+      {example.description && (
+        <div className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 border-t border-gray-200 dark:border-gray-700">
+          {example.description}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Add this new component for YouTube recommendations
+const YouTubeRecommendations = ({ query }: { query: string }) => {
+  const [videos, setVideos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchVideos = async () => {
+      if (!query) return;
+      
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/youtube?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        setVideos(data.items || []);
+      } catch (error) {
+        console.error('Error fetching YouTube videos:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchVideos();
+  }, [query]);
+
+  if (loading) {
+    return (
+      <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow">
+        <h3 className="text-lg font-medium mb-4">Loading recommendations...</h3>
+        <div className="animate-pulse space-y-3">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="h-24 bg-gray-200 dark:bg-gray-700 rounded"></div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (videos.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="p-4 bg-white dark:bg-gray-800 rounded-xl shadow">
+      <h3 className="text-lg font-medium mb-4">Related Videos</h3>
+      <div className="space-y-4">
+        {videos.slice(0, 5).map((video) => (
+          <a 
+            key={video.id.videoId} 
+            href={`https://www.youtube.com/watch?v=${video.id.videoId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors p-2"
+          >
+            <div className="flex gap-3">
+              <img 
+                src={video.snippet.thumbnails.default.url} 
+                alt={video.snippet.title}
+                className="w-24 h-18 object-cover rounded"
+              />
+              <div>
+                <h4 className="font-medium text-sm line-clamp-2">{video.snippet.title}</h4>
+                <p className="text-xs text-gray-500 mt-1">{video.snippet.channelTitle}</p>
+              </div>
+            </div>
+          </a>
+        ))}
       </div>
     </div>
+  );
+};
+
+// Add this component to render formatted text with code blocks
+const FormattedText = ({ text }: { text: string }) => {
+  // Split text by code blocks (both inline and block)
+  const parts = [];
+  let lastIndex = 0;
+  
+  // Find all code blocks with regex
+  const codeBlockRegex = /```(?:\w+)?\s*([\s\S]*?)```|`([^`]+)`/g;
+  let match;
+  
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    // Add text before the code block
+    if (match.index > lastIndex) {
+      parts.push({
+        type: 'text',
+        content: text.substring(lastIndex, match.index)
+      });
+    }
+    
+    // Check if this is an inline code block (with single backticks) or a block code (with triple backticks)
+    if (match[2]) {
+      // Inline code
+      parts.push({
+        type: 'inlineCode',
+        content: match[2]
+      });
+    } else {
+      // Block code
+      parts.push({
+        type: 'blockCode',
+        content: match[1],
+        language: match[0].match(/```(\w+)/)?.[1] || 'text'
+      });
+    }
+    
+    lastIndex = match.index + match[0].length;
+  }
+  
+  // Add any remaining text
+  if (lastIndex < text.length) {
+    parts.push({
+      type: 'text',
+      content: text.substring(lastIndex)
+    });
+  }
+  
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (part.type === 'text') {
+          return <span key={index}>{part.content}</span>;
+        } else if (part.type === 'inlineCode') {
+          return (
+            <code 
+              key={index}
+              className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 font-mono text-sm"
+            >
+              {part.content}
+            </code>
+          );
+        } else if (part.type === 'blockCode') {
+          return (
+            <div key={index} className="my-4">
+              <SyntaxHighlighter 
+                language={part.language} 
+                style={tomorrow}
+                customStyle={{
+                  borderRadius: '0.375rem',
+                  fontSize: '0.875rem'
+                }}
+              >
+                {part.content}
+              </SyntaxHighlighter>
+            </div>
+          );
+        }
+        return null;
+      })}
+    </>
   );
 };
 
@@ -399,7 +583,12 @@ export default function ResearchAssistant() {
  // const [, setIsSaving] = useState(false);
   const [, setShowApiKeyModal] = useState(false);
   const [status, setStatus] = useState<ResearchStatus | null>(null);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamedResult, setStreamedResult] = useState<Partial<ResearchResult> | null>(null);
   const supabase = createClientComponentClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [useOllama, setUseOllama] = useState(false);
 
   // Debounced API key check
   const debouncedCheckApiKey = debounce(async () => {
@@ -468,6 +657,15 @@ export default function ResearchAssistant() {
     };
   }, []);
 
+  useEffect(() => {
+    const urlQuery = searchParams.get('q');
+    if (urlQuery && urlQuery !== query) {
+      setQuery(urlQuery);
+      // Call handleSearch without parameters
+      handleSearch();
+    }
+  }, [searchParams]); // React to URL changes
+
   const handleValidateKey = async (inputKey: string) => {
     try {
       const response = await fetch('/api/validate-key', {
@@ -493,60 +691,78 @@ export default function ResearchAssistant() {
     }
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSearch = async () => {
     if (!query.trim()) return;
-
+    
     setIsLoading(true);
-    setStatus(null);
     setResult(null);
-
+    
     try {
       const response = await fetch('/api/research', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          query,
-          mode: searchMode
-        }),
+        body: JSON.stringify({ query, useOllama }),
       });
-
+      
+      if (!response.ok) {
+        throw new Error(`Error: ${response.status}`);
+      }
+      
+      // Handle streaming response
       const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response reader');
-
+      if (!reader) throw new Error('Response body is not readable');
+      
+      let receivedData = '';
+      
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
-        const text = new TextDecoder().decode(value);
-        const lines = text.split('\n').filter(Boolean);
-
+        
+        // Convert the chunk to text
+        const chunk = new TextDecoder().decode(value);
+        receivedData += chunk;
+        
+        // Process each line
+        const lines = receivedData.split('\n');
+        receivedData = lines.pop() || ''; // Keep the last incomplete line
+        
         for (const line of lines) {
-          const data = JSON.parse(line);
-          if (data.status) {
-            setStatus(data.status);
-          }
-          if (data.research) {
-            setResult(data.research);
-          }
-          if (data.error) {
-            throw new Error(data.error);
+          if (!line.trim()) continue;
+          
+          try {
+            const data = JSON.parse(line);
+            
+            if (data.status) {
+              // Update status
+              setStatus(data.status);
+            } else if (data.research) {
+              // Final research result
+              setResult(data.research);
+              setIsLoading(false);
+            } else if (data.error) {
+              throw new Error(data.error);
+            }
+          } catch (e) {
+            console.error('Error parsing JSON:', e, line);
           }
         }
       }
     } catch (error) {
       console.error('Search error:', error);
-      toast.error(error instanceof Error ? error.message : 'Research failed');
-    } finally {
+      toast.error('An error occurred during research. Please try again.');
       setIsLoading(false);
     }
   };
 
-  const handleFollowUp = (question: string) => {
+  const handleFollowUpQuestion = (question: string) => {
+    // Update URL without full page reload
+    router.push(`/dashboard/assistant?q=${encodeURIComponent(question)}`);
+    
+    // Also update the query state and trigger search
     setQuery(question);
-    handleSearch({ preventDefault: () => {} } as React.FormEvent);
+    handleSearch();
   };
 
   const handleSave = async () => {
@@ -606,7 +822,7 @@ export default function ResearchAssistant() {
       )}
 
       {/* Centered Initial Search Bar */}
-      {isValidated && !result && (
+      {isValidated && !result && !isStreaming && (
         <div className="flex items-center justify-center min-h-[80vh]">
           <div className="w-full max-w-2xl">
             <h1 className="text-3xl font-bold text-center mb-8">Research Assistant</h1>
@@ -635,7 +851,13 @@ export default function ResearchAssistant() {
               </Tabs>
             </div>
             <div className="relative">
-              <form onSubmit={handleSearch} className="relative">
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault(); // Prevent form submission
+                  handleSearch();
+                }} 
+                className="relative"
+              >
                 <div className="relative flex items-center">
                   <input
                     type="text"
@@ -677,7 +899,8 @@ export default function ResearchAssistant() {
                     key={index}
                     onClick={() => {
                       setQuery(suggestion);
-                      handleSearch({ preventDefault: () => {} } as React.FormEvent);
+                      // Call handleSearch directly without parameters
+                      handleSearch();
                     }}
                     className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 text-sm"
                   >
@@ -690,112 +913,69 @@ export default function ResearchAssistant() {
         </div>
       )}
 
-      {/* Results Section with Bottom Bar */}
-      {result && (
-        <>
-          <div className="pb-40"> {/* Increased padding to accommodate bottom bar */}
-            <ResearchResultView 
-              result={result}
-              query={query}
-              onSave={handleSave} 
-            />
-
-            {/* Follow-up Questions Section */}
-            {result.suggestedQuestions && result.suggestedQuestions.length > 0 && (
-              <div className="max-w-4xl mx-auto mt-8 mb-16">
-                <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-4">
-                  Explore Further
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {result.suggestedQuestions.map((question, index) => (
-                    <button
-                      key={index}
-                      onClick={() => handleFollowUp(question)}
-                      className="text-left px-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 group"
-                    >
-                      <PlusIcon className="h-5 w-5 text-blue-500 group-hover:scale-110 transition-transform" />
-                      <span className="text-gray-700 dark:text-gray-300">{question}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Floating Bottom Bar - Now just for the search */}
-          <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 p-4 shadow-lg z-40">
-            <div className={`mx-auto px-4 transition-all duration-200 ${
-              isSidebarCollapsed ? 'max-w-7xl' : 'ml-64 mr-8'
-            }`}>
-              <div className="flex space-x-4">
-                <div className="relative flex-1">
+      {/* Research Results */}
+      {isValidated && (result || isStreaming) && (
+        <div>
+          {/* Search Bar */}
+          <div className="mb-8">
+            <div className="relative">
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault(); // Prevent form submission
+                  handleSearch();
+                }} 
+                className="relative"
+              >
+                <div className="relative flex items-center">
                   <input
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Ask a follow-up question..."
-                    className="w-full px-4 py-3 pl-10 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+                    placeholder={
+                      searchMode === 'web' 
+                        ? "Enter your research query..." 
+                        : "Search academic papers..."
+                    }
+                    className="w-full px-4 py-3 rounded-lg border dark:border-gray-600 dark:bg-gray-700"
                   />
-                  <QuestionMarkCircleIcon className="h-5 w-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <button
+                    type="submit"
+                    disabled={isLoading || !query.trim()}
+                    className="absolute right-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    {isLoading ? (
+                      <Loader className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Search className="w-5 h-5" />
+                    )}
+                  </button>
                 </div>
-                <button
-                  onClick={handleSearch}
-                  disabled={isLoading || !query.trim()}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 min-w-[140px] justify-center"
-                >
-                  {isLoading ? (
-                    <span className="flex items-center gap-2">
-                      <Loader className="h-5 w-5 animate-spin" />
-                      <span>Thinking...</span>
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <MagnifyingGlassIcon className="h-5 w-5" />
-                      <span>Ask Follow-up</span>
-                    </span>
-                  )}
-                </button>
-              </div>
+              </form>
             </div>
           </div>
-        </>
-      )}
 
-      {/* Save Dialog */}
-      {showSaveDialog && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 max-w-md w-full">
-            <h3 className="text-xl font-bold mb-4">Save Research</h3>
-            <p className="text-gray-600 dark:text-gray-300 mb-4">
-              This research will be saved to your reports.
-            </p>
-            <div className="flex justify-end space-x-4">
-              <button
-                onClick={() => setShowSaveDialog(false)}
-                className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <Loader className="h-5 w-5 animate-spin" />
-                    <span>Saving...</span>
-                  </span>
-                ) : (
-                  <span>Save</span>
-                )}
-              </button>
+          {/* Results */}
+          {isStreaming ? (
+            <div className="animate-pulse">
+              <ResearchResultView 
+                result={streamedResult as ResearchResult} 
+                query={query} 
+                onSave={handleSave}
+                onFollowUp={handleFollowUpQuestion}
+              />
             </div>
-          </div>
+          ) : (
+            <ResearchResultView 
+              result={result!} 
+              query={query} 
+              onSave={handleSave}
+              onFollowUp={handleFollowUpQuestion}
+            />
+          )}
         </div>
       )}
 
-      {/* Add status display */}
+      {/* Status Indicator */}
       {status && (
         <div className="mt-4 p-4 border rounded-lg bg-gray-50 dark:bg-gray-800">
           <div className="flex items-center gap-2 mb-2">

@@ -6,37 +6,14 @@ import { WebBrowser } from "langchain/tools/webbrowser";
 import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
 import { Document } from "langchain/document";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
-//import { createClient } from "@supabase/supabase-js";
-//import axios from 'axios';
-//import * as cheerio from 'cheerio';
-//import { ChatGroq } from "@langchain/groq";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { TavilySearchAPIRetriever } from "@langchain/community/retrievers/tavily_search_api";
 import { RunnableSequence } from "@langchain/core/runnables";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
-import { ChatOllama } from "@langchain/community/chat_models/ollama";
-import { OllamaEmbeddings } from "@langchain/community/embeddings/ollama";
-import { MessageContent } from "@langchain/core/messages";
 
-function sanitizeJsonString(str: string): string {
-  return str
-    // Remove markdown formatting
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    // Replace line breaks with spaces
-    .replace(/\n/g, ' ')
-    // Replace multiple spaces with single space
-    .replace(/\s+/g, ' ')
-    // Fix any broken quotes
-    .replace(/[""]/g, '"')
-    // Escape any remaining special characters
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
-    .trim();
-}
-
-// Define interfaces for code examples and extracted blocks
+// Define interfaces for better type safety
 interface CodeExample {
   title: string;
   language: string;
@@ -45,689 +22,921 @@ interface CodeExample {
   source?: string;
 }
 
-interface CodeBlock {
-  language: string;
-  code: string;
+
+
+interface TavilyResult {
+  title: string;
+  url: string;
+  content: string;
+  raw_content?: string;
+  score?: number;
 }
 
-// Add this interface near your other interfaces
-interface TextContent {
-  text?: string;
-  content?: string;
+interface TavilyResponse {
+  results: TavilyResult[];
 }
 
-// // Add interface for search result structure
-// interface SearchResult {
-//   title: string;
-//   content: string;
-//   url: string;
-//   snippet?: string;
-//   score?: number;
-// }
+interface ResearchStatus {
+  stage: 'searching' | 'downloading' | 'processing' | 'analyzing' | 'complete';
+  message: string;
+  progress: { current: number; total: number };
+}
 
-// interface ResearchResponse {
-//   summary: string;
-//   findings: Array<{
-//     title: string;
-//     content: string;
-//     source: string;
-//     relevance: string;
-//     type: string;
-//   }>;
-//   metadata: {
-//     sourcesCount: number;
-//     confidence: number;
-//     researchDepth: string;
-//   };
+interface Statistic {
+  metric: string;
+  value: string;
+  context: string;
+  source: string;
+}
+
+interface Finding {
+  title: string;
+  content: string;
+  source: string;
+  relevance: string;
+  type: string;
+  category?: string;
+}
+
+// function sanitizeJsonString(str: string): string {
+//   return str
+//     // Remove markdown formatting
+//     .replace(/\*\*/g, '')
+//     .replace(/\*/g, '')
+//     // Replace line breaks with spaces
+//     .replace(/\n/g, ' ')
+//     // Replace multiple spaces with single space
+//     .replace(/\s+/g, ' ')
+//     // Fix any broken quotes
+//     .replace(/[""]/g, '"')
+//     // Escape any remaining special characters
+//     .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+//     .trim();
 // }
 
 export class ResearchAgent {
   private model: BaseChatModel;
   private webBrowser: WebBrowser;
   private tavilyRetriever: TavilySearchAPIRetriever;
-  private embeddings: GoogleGenerativeAIEmbeddings | OllamaEmbeddings;
+  private embeddings: GoogleGenerativeAIEmbeddings;
   private vectorStore: MemoryVectorStore;
-  private useOllama: boolean;
+  private lastQuery: string | null = null;
 
-  constructor(config: {
-    useOllama?: boolean;
-    ollamaModel?: string;
-    ollamaBaseUrl?: string;
-  } = {}) {
-    this.useOllama = config.useOllama ?? false;
+  constructor() {
+    console.log("Initializing ResearchAgent with Google Generative AI");
+    
+    this.model = new ChatGoogleGenerativeAI({
+      modelName: "gemini-2.0-flash",
+      apiKey: process.env.GOOGLE_API_KEY!,
+      temperature: 0.3,
+      maxOutputTokens: 8192,
+    });
 
-    if (this.useOllama) {
-      // Initialize Ollama model
-      this.model = new ChatOllama({
-        baseUrl: config.ollamaBaseUrl || "http://localhost:11434",
-        model: config.ollamaModel || "deepseek-coder:latest",
-          temperature: 0.3,
-        });
-
-      // Initialize Ollama embeddings
-      this.embeddings = new OllamaEmbeddings({
-        baseUrl: config.ollamaBaseUrl || "http://localhost:11434",
-        model: config.ollamaModel || "deepseek-coder:latest",
-      });
-    } else {
-      // Initialize Google model with the correct API version
-      this.model = new ChatGoogleGenerativeAI({
-        modelName: "gemini-1.5-pro",
-        apiKey: process.env.GOOGLE_API_KEY!,
-        temperature: 0.3,
-        maxOutputTokens: 8192,
-      });
-
-      // Also update the embeddings
-      this.embeddings = new GoogleGenerativeAIEmbeddings({
-        apiKey: process.env.GOOGLE_API_KEY!,
-        modelName: "embedding-001",
-        
-      });
-    }
+    this.embeddings = new GoogleGenerativeAIEmbeddings({
+      apiKey: process.env.GOOGLE_API_KEY!,
+      modelName: "text-embedding-004",
+    });
 
     // Initialize vector store
     this.vectorStore = new MemoryVectorStore(this.embeddings);
     
-    // Initialize web browser with appropriate model and embeddings
-    this.webBrowser = new WebBrowser({ 
-      model: this.model, 
-      embeddings: this.embeddings
-    });
-
-    // Initialize Tavily
-    this.tavilyRetriever = new TavilySearchAPIRetriever({
-      apiKey: process.env.TAVILY_API_KEY!,
-      k: 8,
-      searchDepth: "advanced"
-    });
-  }
-
-  // Add a method to switch models at runtime
-  async switchModel(config: {
-    useOllama: boolean;
-    ollamaModel?: string;
-    ollamaBaseUrl?: string;
-  }) {
-    if (config.useOllama) {
-      this.model = new ChatOllama({
-        baseUrl: config.ollamaBaseUrl || "http://localhost:11434",
-        model: config.ollamaModel || "deepseek-r1:latest",
-        temperature: 0.3,
-      });
-
-      this.embeddings = new OllamaEmbeddings({
-        baseUrl: config.ollamaBaseUrl || "http://localhost:11434",
-        model: config.ollamaModel || "deepseek-r1:latest",
-      });
-    } else {
-      this.model = new ChatGoogleGenerativeAI({
-        modelName: "gemini-2.0-flash",
-        apiKey: process.env.GOOGLE_API_KEY!,
-        temperature: 0.3,
-        maxOutputTokens: 8192,
-      });
-
-      this.embeddings = new GoogleGenerativeAIEmbeddings({
-        apiKey: process.env.GOOGLE_API_KEY!,
-        modelName: "text-embedding-004",
-        
-      });
-    }
-
-    // Reinitialize vector store with new embeddings
-    this.vectorStore = new MemoryVectorStore(this.embeddings);
-    
-    // Update web browser with new model and embeddings
+    // Initialize web browser
     this.webBrowser = new WebBrowser({
       model: this.model,
       embeddings: this.embeddings
     });
+    
+    // Initialize Tavily retriever
+    this.tavilyRetriever = new TavilySearchAPIRetriever({
+      apiKey: process.env.TAVILY_API_KEY,
+      k: 10,
+      includeRawContent: true,
+      includeImages: false,
+    });
   }
 
   async research(query: string) {
-    // Declare relevantDocs at the top level of the function so it's available in the catch block
-    let relevantDocs: Document[] = [];
+    // Store the query for later use
+    this.lastQuery = query;
     
     try {
-      // Get and process documents
-      const tavilyDocs = await this.tavilyRetriever.getRelevantDocuments(query);
-      console.log(`Found ${tavilyDocs.length} documents from Tavily`);
-
-      const textSplitter = new RecursiveCharacterTextSplitter({
-        chunkSize: 1000,
-        chunkOverlap: 200,
-      });
-
-      // Create fresh vector store for each query
-      this.vectorStore = new MemoryVectorStore(this.embeddings);
-
-      // Process and store documents
-      const splitDocs = await textSplitter.splitDocuments(tavilyDocs);
-      await this.vectorStore.addDocuments(splitDocs);
-
-      // Process web content
-      const topUrls = tavilyDocs
-        .map(doc => doc.metadata.source)
-        .filter(url => url && url.startsWith('http'))
-        .slice(0, 3);
-
-      for (const url of topUrls) {
-        try {
-          const content = await this.webBrowser.call(url);
-          const webDocs = await textSplitter.createDocuments([content]);
-          await this.vectorStore.addDocuments(webDocs);
-        } catch (error) {
-          console.warn(`Failed to process URL: ${url}`, error);
-        }
+      // Check if Tavily API key is available
+      if (!process.env.TAVILY_API_KEY) {
+        console.error("Tavily API key is missing");
+        throw new Error("Tavily API key is missing");
       }
-
-      // Get most relevant content
-      relevantDocs = await this.vectorStore.similaritySearch(query, 5);
-      console.log('Retrieved most relevant content through RAG');
-
-      // Instead of asking for a complex JSON structure in one go,
-      // let's break it down into separate, simpler requests
-
-      // 1. First, get a summary
-      const summaryChain = RunnableSequence.from([
-        {
-          context: () => relevantDocs.map(doc => 
-            `Source: ${doc.metadata.source || 'Unknown'}\nContent: ${doc.pageContent.substring(0, 500)}`
-          ).join('\n---\n'),
-          query: () => query
-        },
-        ChatPromptTemplate.fromTemplate(`
-          You are an expert research analyst. Analyze this topic: {query}
-          
-          Here is the relevant research data:
-          {context}
-          
-          Write a comprehensive summary of the topic in 2-3 paragraphs.
-          Focus on key facts, current developments, and important context.
-        `),
-        this.model,
-        new StringOutputParser(),
-      ]);
-
-      // Execute the summary chain and store the result
-      const summaryResult = await summaryChain.invoke({});
-      console.log("Generated research summary");
-
-      // 2. Get key findings
-      const findingsChain = RunnableSequence.from([
-        {
-          context: () => relevantDocs.map(doc => 
-            `Source: ${doc.metadata.source || 'Unknown'}\nContent: ${doc.pageContent.substring(0, 500)}`
-          ).join('\n---\n'),
-          query: () => query
-        },
-        ChatPromptTemplate.fromTemplate(`
-          You are an expert research analyst. Analyze this topic: {query}
-          
-          Here is the relevant research data:
-          {context}
-          
-          Extract 3-5 key findings about this topic. For each finding, provide:
-          1. A clear title
-          2. A detailed explanation (2-3 sentences)
-          3. The source URL if available
-          
-          Format as a simple JSON array like this:
-          [
-            {{
-              "title": "Finding title",
-              "content": "Detailed explanation",
-              "source": "URL or reference",
-              "relevance": "High"
-            }}
-          ]
-        `),
-        this.model,
-        new StringOutputParser(),
-      ]);
-
-      // 3. For programming topics, get code examples
-      const isProgrammingTopic = this.isProgrammingQuery(query);
-      let codeExamples: CodeExample[] = [];
       
-      if (isProgrammingTopic) {
-        console.log("Programming topic detected, extracting code examples");
+      // Enhanced search with multiple strategies
+      let tavilyDocs: Document[] = [];
+      try {
+        // Use multiple search queries for better coverage
+        const searchQueries = this.generateSearchQueries(query);
+        const allResults: TavilyResult[] = [];
         
-        // STEP 1: Direct code extraction from documents
-        const documentCodeBlocks: CodeBlock[] = [];
-        for (const doc of relevantDocs) {
-          const blocks = this.extractCodeBlocks(doc.pageContent);
-          if (blocks.length > 0) {
-            documentCodeBlocks.push(...blocks);
-          }
-        }
-        
-        // STEP 2: Extract code from summary
-        const summaryCodeBlocks = this.extractCodeBlocks(summaryResult);
-        
-        // STEP 3: Combine and format extracted code blocks
-        const allExtractedBlocks = [...summaryCodeBlocks, ...documentCodeBlocks];
-        
-        if (allExtractedBlocks.length > 0) {
-          // Convert blocks to examples with proper metadata
-          const extractedExamples = allExtractedBlocks.map((block, index) => {
-            // Determine source
-            const source = index < summaryCodeBlocks.length 
-              ? "Research summary" 
-              : (relevantDocs[0]?.metadata?.source || "Research data");
-            
-            return {
-              title: `Example ${index + 1}`,
-              language: block.language || 'text',
-              code: block.code,
-              description: `Code example related to ${query}`,
-              source
-            };
+        for (const searchQuery of searchQueries) {
+          const response = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.TAVILY_API_KEY}`
+            },
+            body: JSON.stringify({
+              query: searchQuery,
+              search_depth: "advanced",
+              include_raw_content: true,
+              include_images: false,
+              max_results: 5,
+              include_domains: this.getRelevantDomains(query),
+              exclude_domains: ["pinterest.com", "instagram.com", "facebook.com"]
+            })
           });
           
-          // Add to our collection
-          codeExamples = extractedExamples;
-          console.log(`Extracted ${codeExamples.length} code examples directly from content`);
-        }
-        
-        // STEP 4: If we need more examples or have none, generate them with the LLM
-        if (codeExamples.length < 2) {
-          try {
-            console.log("Generating additional code examples with LLM");
-            
-            // Use a template approach instead of JSON to avoid parsing issues
-            const codePrompt = `
-              You are an expert programmer helping with: ${query}
-              
-              ${codeExamples.length > 0 
-                ? "I need additional code examples beyond what I already have." 
-                : "I need practical code examples that demonstrate this concept."}
-              
-              Please provide ${codeExamples.length > 0 ? "one more" : "two"} well-commented, working code example.
-              
-              For each example:
-              1. Start with "EXAMPLE TITLE: " followed by a descriptive title
-              2. Then "LANGUAGE: " followed by the programming language
-              3. Then the code block with triple backticks
-              4. End with "DESCRIPTION: " followed by an explanation
-              
-              Example format:
-              
-              EXAMPLE TITLE: Sorting an Array
-              LANGUAGE: javascript
-              \`\`\`javascript
-              // Function to sort an array using quicksort
-              function quickSort(arr) {
-                  if (arr.length <= 1) return arr;
-                  
-                  const pivot = arr[0];
-                  const left = [];
-                  const right = [];
-                  
-                  for (let i = 1; i < arr.length; i++) {
-                      if (arr[i] < pivot) left.push(arr[i]);
-                      else right.push(arr[i]);
-                  }
-                  
-                  return [...quickSort(left), pivot, ...quickSort(right)];
-              }
-              
-              // Example usage
-              const unsortedArray = [5, 3, 7, 1, 8, 2];
-              console.log(quickSort(unsortedArray)); // [1, 2, 3, 5, 7, 8]
-              \`\`\`
-              DESCRIPTION: This example demonstrates how to implement a quicksort algorithm in JavaScript, which is an efficient sorting method with O(n log n) average time complexity.
-            `;
-            
-            // Use a direct approach with the model
-            const response = await this.model.invoke([
-              { role: "system", content: "You are an expert programming assistant that provides clear, working code examples." },
-              { role: "user", content: codePrompt }
-            ]);
-            
-            // Extract code examples using regex patterns instead of JSON parsing
-            const generatedExamples = this.extractCodeExamplesFromTemplate(response.content);
-            
-            if (generatedExamples.length > 0) {
-              // Add the generated examples to our collection
-              codeExamples = [...codeExamples, ...generatedExamples];
-              console.log(`Generated ${generatedExamples.length} additional code examples`);
-            }
-          } catch (e: unknown) {
-            const error = e as Error;
-            console.warn('Error generating code examples:', error.message);
+          if (response.ok) {
+            const data: TavilyResponse = await response.json();
+            allResults.push(...data.results);
           }
         }
         
-        // STEP 5: If we still don't have examples, use fallbacks
-        if (codeExamples.length === 0) {
-          console.log("Using fallback code examples");
-          codeExamples = this.createFallbackCodeExamples(query);
-        }
+        // Remove duplicates and sort by relevance
+        const uniqueResults = this.deduplicateResults(allResults);
+        const sortedResults = this.rankResults(uniqueResults, query);
         
-        // STEP 6: Ensure code examples are relevant to the query
-        codeExamples = this.ensureCodeRelevance(codeExamples, query);
+        // Convert to Documents with enhanced metadata
+        tavilyDocs = sortedResults.slice(0, 15).map(result => {
+          return new Document({
+            pageContent: this.cleanContent(result.raw_content || result.content || ""),
+            metadata: { 
+              source: result.url,
+              title: result.title || "",
+              score: result.score || 0,
+              domain: this.extractDomain(result.url),
+              contentLength: (result.raw_content || result.content || "").length
+            }
+          });
+        });
+        
+        console.log(`Found ${tavilyDocs.length} high-quality documents from enhanced search`);
+      } catch (tavilyError) {
+        console.error("Error fetching documents from Tavily:", tavilyError);
+        // Create fallback documents
+        tavilyDocs = [
+          new Document({
+            pageContent: `Unable to retrieve comprehensive information for: ${query}. This may be due to API limitations or network issues.`,
+            metadata: { source: "Error recovery", title: query }
+          })
+        ];
+      }
+      
+      // Enhanced document processing
+      const textSplitter = new RecursiveCharacterTextSplitter({
+        chunkSize: 1200,
+        chunkOverlap: 300,
+        separators: ["\n\n", "\n", ". ", " ", ""]
+      });
+      
+      // Create fresh vector store for each query
+      this.vectorStore = new MemoryVectorStore(this.embeddings);
+      
+      // Process and add documents to vector store with quality filtering
+      const qualityDocs = this.filterQualityDocuments(tavilyDocs);
+      const splitDocs = await textSplitter.splitDocuments(qualityDocs);
+      await this.vectorStore.addDocuments(splitDocs);
+      
+      // Get most relevant documents with enhanced retrieval
+      const relevantDocs = await this.getEnhancedRelevantDocs(query, 12);
+      console.log("Retrieved most relevant content through enhanced RAG");
+      
+      // Generate comprehensive summary
+      const summary = await this.generateEnhancedSummary(query, relevantDocs);
+
+      // Extract findings with better structure
+      const findings = await this.extractEnhancedFindings(relevantDocs, query);
+
+      // Extract code examples if programming-related
+      let codeExamples: CodeExample[] = [];
+      if (this.isProgrammingQuery(query)) {
+        console.log('Programming topic detected, extracting code examples');
+        codeExamples = await this.extractEnhancedCodeExamples(relevantDocs, query);
       }
 
-      // 4. Get suggested questions
-      const questionsChain = RunnableSequence.from([
-        {
-          query: () => query
-        },
-        ChatPromptTemplate.fromTemplate(`
-          Based on this research topic: {query}
-          
-          Generate 3-5 natural follow-up questions that would help explore:
-          - Deeper technical aspects
-          - Comparative analysis
-          - Future implications
-          - Practical applications
-          
-          Return ONLY a JSON array of strings like this:
-          ["Question 1?", "Question 2?", "Question 3?"]
-        `),
-        this.model,
-        new StringOutputParser(),
-      ]);
+      // Generate contextual questions
+      const suggestedQuestions = await this.generateContextualQuestions(query, relevantDocs);
 
-      // Execute all chains in parallel
-      const [findingsResult, questionsResult] = await Promise.all([
-        findingsChain.invoke({}),
-        questionsChain.invoke({})
-      ]);
+      // Extract statistics with validation
+      const statistics = await this.extractValidatedStatistics(relevantDocs, query);
 
-      // Extract JSON from results
-      const findings = this.extractJSON(findingsResult) || [];
-      const suggestedQuestions = this.extractJSON(questionsResult) || [];
-
-      // Extract statistics from the documents
-      let statistics = [];
-      // Use our custom statistics extraction directly
-      statistics = this.extractStatistics(relevantDocs, query);
-      console.log(`Extracted ${statistics.length} statistics from documents`);
-
-      // Combine results into a single response
+      // Return comprehensive results
       return {
-        summary: summaryResult,
+        summary: summary,
         findings: Array.isArray(findings) ? findings : [],
         codeExamples: Array.isArray(codeExamples) ? codeExamples : [],
         suggestedQuestions: Array.isArray(suggestedQuestions) ? suggestedQuestions : [],
         statistics: statistics,
         metadata: {
           sourcesCount: relevantDocs.length,
-          confidence: 0.9,
+          confidence: this.calculateConfidence(relevantDocs, findings),
           researchDepth: "Comprehensive",
-          lastUpdated: new Date().toISOString()
+          lastUpdated: new Date().toISOString(),
+          searchQueries: this.generateSearchQueries(query).length,
+          qualityScore: this.calculateQualityScore(relevantDocs)
         }
       };
 
     } catch (error) {
-      console.error('Research error:', error);
-      // Now relevantDocs is defined in the catch block
-      return this.createEnhancedFallback(query, relevantDocs);
+      console.error("Research error:", error);
+      
+      // Return enhanced fallback response
+      return this.createEnhancedFallback(query, []);
     }
   }
 
-  private createEnhancedFallback(query: string, docs: Document[]): {
-    summary: string;
-    findings: Array<{
-      title: string;
-      content: string;
-      source: string;
-      relevance: string;
-    }>;
-    codeExamples: CodeExample[];
-    suggestedQuestions: string[];
-    metadata: {
-      sourcesCount: number;
-      confidence: number;
-      researchDepth: string;
-      lastUpdated: string;
-    };
-  } {
-    // Extract useful information from docs
-    const sources = docs.map(doc => doc.metadata.source).filter(Boolean);
-    const uniqueSources = [...new Set(sources)];
+  // Enhanced search query generation
+  private generateSearchQueries(query: string): string[] {
+    const baseQuery = query.trim();
+    const queries = [baseQuery];
     
-    // Check if query is related to programming
-    const programmingKeywords = ['code', 'algorithm', 'programming', 'function', 'class', 'javascript', 'python', 'java', 'c++', 'typescript'];
-    const isProgrammingQuery = programmingKeywords.some(keyword => query.toLowerCase().includes(keyword));
-    
-    // Create basic code examples if it's a programming query
-    const codeExamples = isProgrammingQuery ? [
-      {
-        title: "Basic Example",
-        language: "python",
-        code: "def example():\n    print('Hello World')\n\nexample()",
-        description: "A simple example related to the query"
-      }
-    ] : [];
-    
-    // Create a basic summary from the documents
-    let summaryText = `Research results for "${query}". `;
-    
-    if (docs.length > 0) {
-      // Extract first paragraphs from top documents
-      const topContent = docs.slice(0, 3).map(doc => 
-        doc.pageContent.split('\n')[0].substring(0, 200)
-      ).join(' ');
-      
-      summaryText += topContent;
+    // Add variations for better coverage
+    if (this.isProgrammingQuery(query)) {
+      queries.push(`${baseQuery} tutorial examples`);
+      queries.push(`${baseQuery} best practices guide`);
+      queries.push(`${baseQuery} documentation official`);
     } else {
-      summaryText += "Limited information was found on this topic.";
+      queries.push(`${baseQuery} latest research 2024`);
+      queries.push(`${baseQuery} comprehensive guide`);
+      queries.push(`${baseQuery} expert analysis`);
     }
     
-    // Create findings from available documents
-    const findings = docs.slice(0, 5).map((doc, index) => ({
-      title: `Finding ${index + 1}`,
-      content: doc.pageContent.substring(0, 300) + "...",
-      source: doc.metadata.source || "Unknown source",
-      relevance: index < 2 ? "High" : "Medium"
-    }));
-    
-    return {
-      summary: summaryText,
-      findings: findings.length > 0 ? findings : [
-        {
-          title: "Basic Information",
-          content: `Information about ${query} was processed but could not be properly formatted.`,
-          source: "System",
-          relevance: "Medium"
-        }
-      ],
-      codeExamples: codeExamples,
-      suggestedQuestions: [
-        `What are the best practices for ${query}?`,
-        `How does ${query} compare to alternatives?`,
-        `What are recent developments in ${query}?`
-      ],
-      metadata: {
-        sourcesCount: uniqueSources.length,
-        confidence: 0.6,
-        researchDepth: docs.length > 5 ? "Moderate" : "Basic",
-        lastUpdated: new Date().toISOString()
+    // Add specific domain queries
+    if (baseQuery.length > 20) {
+      const keywords = this.extractKeywords(baseQuery);
+      if (keywords.length > 1) {
+        queries.push(keywords.slice(0, 3).join(' '));
       }
-    };
+    }
+    
+    return queries.slice(0, 3); // Limit to 3 queries to avoid rate limits
   }
 
-  private cleanResponse(text: string): string {
+  // Get relevant domains for search
+  private getRelevantDomains(query: string): string[] {
+    const domains: string[] = [];
+    
+    if (this.isProgrammingQuery(query)) {
+      domains.push("stackoverflow.com", "github.com", "developer.mozilla.org", "docs.python.org");
+    }
+    
+    // Add academic domains for research topics
+    if (query.toLowerCase().includes('research') || query.toLowerCase().includes('study')) {
+      domains.push("arxiv.org", "scholar.google.com", "researchgate.net");
+    }
+    
+    // Add news domains for current events
+    if (query.toLowerCase().includes('news') || query.toLowerCase().includes('2024')) {
+      domains.push("reuters.com", "bbc.com", "techcrunch.com");
+    }
+    
+    return domains;
+  }
+
+  // Deduplicate search results
+  private deduplicateResults(results: TavilyResult[]): TavilyResult[] {
+    const seen = new Set<string>();
+    return results.filter(result => {
+      const key = result.url.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  // Rank results by relevance
+  private rankResults(results: TavilyResult[], query: string): TavilyResult[] {
+    const queryTerms = query.toLowerCase().split(/\s+/);
+    
+    return results
+      .map(result => {
+        let relevanceScore = result.score || 0;
+        
+        // Boost score based on title relevance
+        const titleLower = result.title.toLowerCase();
+        const titleMatches = queryTerms.filter(term => titleLower.includes(term)).length;
+        relevanceScore += titleMatches * 0.2;
+        
+        // Boost score based on content relevance
+        const contentLower = (result.content || '').toLowerCase();
+        const contentMatches = queryTerms.filter(term => contentLower.includes(term)).length;
+        relevanceScore += contentMatches * 0.1;
+        
+        // Boost authoritative domains
+        const domain = this.extractDomain(result.url);
+        if (this.isAuthoritativeDomain(domain)) {
+          relevanceScore += 0.3;
+        }
+        
+        return { ...result, score: relevanceScore };
+      })
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
+  }
+
+  // Clean content for better processing
+  private cleanContent(content: string): string {
+    return content
+      .replace(/\s+/g, ' ')
+      .replace(/[^\w\s.,!?;:()\-"']/g, '')
+      .trim();
+  }
+
+  // Extract domain from URL
+  private extractDomain(url: string): string {
     try {
-      // Find JSON content
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}') + 1;
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  }
+
+  // Check if domain is authoritative
+  private isAuthoritativeDomain(domain: string): boolean {
+    const authoritative = [
+      'wikipedia.org', 'github.com', 'stackoverflow.com', 'mozilla.org',
+      'python.org', 'nodejs.org', 'reactjs.org', 'angular.io', 'vuejs.org',
+      'arxiv.org', 'nature.com', 'science.org', 'ieee.org'
+    ];
+    return authoritative.some(auth => domain.includes(auth));
+  }
+
+  // Filter documents by quality
+  private filterQualityDocuments(docs: Document[]): Document[] {
+    return docs.filter(doc => {
+      const content = doc.pageContent;
+      const contentLength = content.length;
       
-      if (start === -1 || end === 0) {
-        throw new Error('No JSON found');
+      // Filter out very short or very long documents
+      if (contentLength < 100 || contentLength > 10000) {
+        return false;
       }
       
-      // Extract JSON content and clean it
-      let cleaned = text.slice(start, end);
+      // Filter out documents with too many special characters
+      const specialCharRatio = (content.match(/[^\w\s]/g) || []).length / contentLength;
+      if (specialCharRatio > 0.3) {
+        return false;
+      }
+      
+      return true;
+    });
+  }
 
-      // Log the initial cleaned content for debugging
-      console.log('Initial cleaned content length:', cleaned.length);
-
-      // Try a more aggressive approach to fix JSON
-      try {
-        // First attempt - try to parse as is
-        return JSON.stringify(JSON.parse(cleaned));
-      } catch  {
-        console.log('Initial parse failed, trying more aggressive cleaning');
+  // Enhanced relevant document retrieval
+  private async getEnhancedRelevantDocs(query: string, k: number): Promise<Document[]> {
+    // Get initial results
+    const initialDocs = await this.vectorStore.similaritySearch(query, k * 2);
+    
+    // Re-rank based on multiple factors
+    const rankedDocs = initialDocs
+      .map(doc => {
+        let score = 0;
+        const content = doc.pageContent.toLowerCase();
+        const queryTerms = query.toLowerCase().split(/\s+/);
         
-        // More aggressive cleaning
-        cleaned = cleaned
-          // Remove any markdown formatting
-          .replace(/```json/g, '')
-          .replace(/```/g, '')
-          // Fix newlines and spaces
-          .replace(/\r?\n/g, ' ')
-          .replace(/\s+/g, ' ')
-          // Fix common JSON syntax issues
-          .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-          .replace(/([{,])\s*([a-zA-Z0-9_]+)\s*:/g, '$1"$2":') // Quote unquoted keys
-          .replace(/:\s*'([^']*)'/g, ':"$1"') // Replace single quotes with double quotes
-          .replace(/:\s*([a-zA-Z0-9_]+)(\s*[,}])/g, ':"$1"$2') // Quote unquoted values
-          .replace(/"\s*\+\s*"/g, '') // Fix concatenated strings
-          .replace(/\\"/g, '\\"') // Fix escaped quotes
-          .trim();
+        // Term frequency scoring
+        queryTerms.forEach(term => {
+          const matches = (content.match(new RegExp(term, 'g')) || []).length;
+          score += matches;
+        });
+        
+        // Length penalty for very short docs
+        if (doc.pageContent.length < 200) {
+          score *= 0.5;
+        }
+        
+        // Authority bonus
+        if (doc.metadata.source && this.isAuthoritativeDomain(this.extractDomain(doc.metadata.source))) {
+          score *= 1.5;
+        }
+        
+        return { doc, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k)
+      .map(item => item.doc);
+    
+    return rankedDocs;
+  }
 
-        try {
-          // Second attempt - with aggressive cleaning
-          return JSON.stringify(JSON.parse(cleaned));
-        } catch  {
-          console.log('Second parse failed, using fallback');
-          
-          // If all else fails, return a valid fallback response
-          return JSON.stringify({
-            summary: "Research analysis completed with formatting issues",
-            findings: [
-              {
-                title: "Research Results Available",
-                content: "The research was completed but there were issues with the formatting. The system has provided this fallback response.",
-                source: "System",
-                relevance: "High"
-              }
-            ],
-            metadata: {
-              sourcesCount: 0,
-              confidence: 0.5,
-              researchDepth: "basic",
-              lastUpdated: new Date().toISOString()
-            }
+  // Enhanced summary generation
+  private async generateEnhancedSummary(query: string, documents: Document[]): Promise<string> {
+    const summaryChain = RunnableSequence.from([
+      {
+        context: () => documents.map(doc => 
+          `Source: ${doc.metadata.source || 'Unknown'}\nTitle: ${doc.metadata.title || ''}\nContent: ${doc.pageContent.substring(0, 800)}`
+        ).join('\n---\n'),
+        query: () => query
+      },
+      ChatPromptTemplate.fromTemplate(`
+        You are an expert research analyst. Provide a comprehensive analysis of: {query}
+        
+        Research Data:
+        {context}
+        
+        Create a detailed summary that includes:
+        1. A clear introduction to the topic
+        2. Current state and recent developments
+        3. Key challenges and opportunities
+        4. Future outlook and implications
+        
+        Write in a professional, informative tone with specific details and examples.
+        Aim for 3-4 well-structured paragraphs.
+      `),
+      this.model,
+      new StringOutputParser(),
+    ]);
+
+    try {
+      return await summaryChain.invoke({});
+    } catch (error) {
+      console.error("Error generating enhanced summary:", error);
+      return `Research analysis for "${query}" encountered processing issues. The topic appears to be related to ${query} based on available sources.`;
+    }
+  }
+
+  // Enhanced findings extraction
+  private async extractEnhancedFindings(documents: Document[], query: string): Promise<Finding[]> {
+    try {
+      const findingsPrompt = `
+        Analyze the research data about: ${query}
+        
+        Research Content:
+        ${documents.map(doc => `${doc.pageContent.substring(0, 600)}\nSource: ${doc.metadata.source}`).join('\n\n---\n\n')}
+        
+        Extract 4-6 key findings. For each finding, provide:
+        
+        FINDING_START
+        TITLE: [Clear, specific title]
+        CONTENT: [2-3 sentences with specific details, facts, or insights]
+        SOURCE: [Source URL or reference]
+        CATEGORY: [Technology/Research/Market/Scientific/etc.]
+        FINDING_END
+        
+        Focus on factual, verifiable information with specific details.
+      `;
+      
+      const response = await this.model.invoke(findingsPrompt);
+      const responseText = typeof response === 'string' ? response : response.content.toString();
+      
+      return this.parseStructuredFindings(responseText);
+    } catch (error) {
+      console.error("Error extracting enhanced findings:", error);
+      return this.createFallbackFindings(query);
+    }
+  }
+
+  // Parse structured findings
+  private parseStructuredFindings(text: string): Finding[] {
+    const findings: Finding[] = [];
+    const findingBlocks = text.split('FINDING_START').slice(1);
+    
+    for (const block of findingBlocks) {
+      const endIndex = block.indexOf('FINDING_END');
+      const content = endIndex > -1 ? block.substring(0, endIndex) : block;
+      
+      const titleMatch = content.match(/TITLE:\s*(.+?)(?=\n|CONTENT:)/s);
+      const contentMatch = content.match(/CONTENT:\s*(.+?)(?=\n|SOURCE:)/s);
+      const sourceMatch = content.match(/SOURCE:\s*(.+?)(?=\n|CATEGORY:)/s);
+      const categoryMatch = content.match(/CATEGORY:\s*(.+?)(?=\n|$)/s);
+      
+      if (titleMatch && contentMatch) {
+        findings.push({
+          title: titleMatch[1].trim(),
+          content: contentMatch[1].trim(),
+          source: sourceMatch?.[1]?.trim() || 'Research data',
+          relevance: 'High',
+          type: 'Finding',
+          category: categoryMatch?.[1]?.trim() || 'General'
+        });
+      }
+    }
+    
+    return findings;
+  }
+
+  // Enhanced code examples extraction
+  private async extractEnhancedCodeExamples(documents: Document[], query: string): Promise<CodeExample[]> {
+    try {
+      // First extract existing code blocks
+      const directExamples = this.extractDirectCodeBlocks(documents);
+      
+      if (directExamples.length >= 2) {
+        return directExamples.slice(0, 3);
+      }
+      
+      // Generate additional examples if needed
+      const generatedExamples = await this.generateContextualCodeExamples(query, documents);
+      
+      return [...directExamples, ...generatedExamples].slice(0, 3);
+    } catch (error) {
+      console.error('Error extracting enhanced code examples:', error);
+      return this.createFallbackCodeExamples(query);
+    }
+  }
+
+  // Extract direct code blocks from documents
+  private extractDirectCodeBlocks(documents: Document[]): CodeExample[] {
+    const examples: CodeExample[] = [];
+    
+    for (const doc of documents) {
+      const codeBlockRegex = /```(\w+)?\s*([\s\S]*?)```/g;
+      let match;
+      
+      while ((match = codeBlockRegex.exec(doc.pageContent)) !== null) {
+        const language = match[1] || 'text';
+        const code = match[2].trim();
+        
+        if (code.length > 20 && this.isValidCode(code, language)) {
+          examples.push({
+            title: `${language.charAt(0).toUpperCase() + language.slice(1)} Example`,
+            language: language,
+            code: code,
+            description: `Code example extracted from source documentation`,
+            source: doc.metadata?.source || 'Research data'
           });
         }
       }
+    }
+    
+    return examples;
+  }
+
+  // Validate if extracted text is actual code
+  private isValidCode(code: string, language: string): boolean {
+    // Basic validation for common programming constructs
+    const codePatterns = [
+      /function\s+\w+/,
+      /def\s+\w+/,
+      /class\s+\w+/,
+      /import\s+\w+/,
+      /const\s+\w+/,
+      /let\s+\w+/,
+      /var\s+\w+/,
+      /#include/,
+      /public\s+class/
+    ];
+    
+    return codePatterns.some(pattern => pattern.test(code)) || 
+           code.includes('{') || 
+           code.includes('(') ||
+           (language === 'python' && code.includes(':'));
+  }
+
+  // Generate contextual code examples
+  private async generateContextualCodeExamples(query: string, documents: Document[]): Promise<CodeExample[]> {
+    const language = this.detectLanguageFromQuery(query);
+    const context = documents.map(doc => doc.pageContent.substring(0, 300)).join('\n');
+    
+    const codePrompt = `
+      Generate a practical ${language} code example for: ${query}
+      
+      Context from research:
+      ${context}
+      
+      Provide a working code example that demonstrates the concept.
+      Include comments explaining key parts.
+      Make it practical and educational.
+      
+      Format:
+      TITLE: [Descriptive title]
+      LANGUAGE: ${language}
+      CODE_START
+      [Your code here]
+      CODE_END
+      DESCRIPTION: [Brief explanation of what the code does]
+    `;
+    
+    try {
+      const response = await this.model.invoke(codePrompt);
+      const responseText = response.content.toString();
+      
+      return this.parseGeneratedCodeExample(responseText, language);
     } catch (error) {
-      console.error('Clean response error:', error);
-      // Return a basic valid JSON structure
-      return JSON.stringify({
-        summary: "Failed to process response",
-        findings: [
-          {
-            title: "Processing Error",
-            content: "There was an error processing your research query. Please try again with a more specific query.",
-            source: "System",
-            relevance: "High"
-          }
-        ],
-        metadata: {
-          sourcesCount: 0,
-          confidence: 0,
-          researchDepth: "minimal",
-          lastUpdated: new Date().toISOString()
-        }
-      });
+      console.error('Error generating contextual code examples:', error);
+      return [];
     }
   }
 
-  private validateResearchResponse(response: unknown): boolean {
-    if (!response || typeof response !== 'object') {
-      console.warn('Response is not an object');
-      return false;
+  // Parse generated code example
+  private parseGeneratedCodeExample(text: string, language: string): CodeExample[] {
+    const titleMatch = text.match(/TITLE:\s*(.+?)(?=\n)/);
+    const codeMatch = text.match(/CODE_START\s*([\s\S]*?)\s*CODE_END/);
+    const descMatch = text.match(/DESCRIPTION:\s*(.+?)(?=\n|$)/);
+    
+    if (codeMatch) {
+      return [{
+        title: titleMatch?.[1]?.trim() || `${language} Example`,
+        language: language,
+        code: codeMatch[1].trim(),
+        description: descMatch?.[1]?.trim() || 'Generated code example',
+        source: 'AI-generated'
+      }];
     }
     
-    // Type assertion after basic validation
-    const typedResponse = response as {
-      summary: string;
-      findings: Array<{
-        title: string;
-        content: string;
-        source: string;
-        relevance: string;
-      }>;
-      metadata: {
-        sourcesCount: number;
-        confidence: number;
-        researchDepth: string;
-      };
-      codeExamples?: Array<CodeExample>;
-    };
-    
-    // Continue with existing validation using typedResponse
-    if (!typedResponse.summary || !typedResponse.findings || !typedResponse.metadata) {
-      console.warn('Missing required top-level fields');
-      return false;
-    }
-    
-    // Validate summary
-    if (typeof typedResponse.summary !== 'string' || typedResponse.summary.length < 50) {
-      console.warn('Invalid summary');
-      return false;
-    }
+    return [];
+  }
 
-    // Validate findings
-    if (!Array.isArray(typedResponse.findings) || typedResponse.findings.length === 0) {
-      console.warn('Invalid findings array');
-      return false;
-    }
-
-    // Check at least one finding has proper structure
-    const hasValidFinding = typedResponse.findings.some((finding: {
-      title: string;
-      content: string;
-      source: string;
-      relevance: string;
-    }) => 
-      typeof finding.title === 'string' && 
-      typeof finding.content === 'string' && 
-      typeof finding.source === 'string' &&
-      typeof finding.relevance === 'string'
-    );
-
-    if (!hasValidFinding) {
-      console.warn('No valid findings');
-      return false;
-    }
-
-    // Validate code examples if present
-    if (typedResponse.codeExamples && Array.isArray(typedResponse.codeExamples)) {
-      const hasValidCodeExamples = typedResponse.codeExamples.every(example => 
-        typeof example.title === 'string' && 
-        typeof example.language === 'string' && 
-        typeof example.code === 'string' && 
-        typeof example.description === 'string'
-      );
+  // Generate contextual questions
+  private async generateContextualQuestions(query: string, documents: Document[]): Promise<string[]> {
+    try {
+      const questionsPrompt = `
+        Based on the research about: ${query}
+        
+        Key topics found:
+        ${documents.map(doc => doc.pageContent.substring(0, 200)).join('\n')}
+        
+        Generate 5 insightful follow-up questions that would help someone:
+        1. Understand deeper technical aspects
+        2. Explore practical applications
+        3. Compare with alternatives
+        4. Understand future implications
+        5. Learn about best practices
+        
+        Make questions specific to ${query} and based on the research content.
+        
+        Format each question on a new line starting with "Q: "
+      `;
       
-      if (!hasValidCodeExamples) {
-        console.warn('Invalid code examples');
-        // Don't fail validation for this, just log warning
+      const response = await this.model.invoke(questionsPrompt);
+      const responseText = response.content.toString();
+      
+      const questions = responseText
+        .split('\n')
+        .filter(line => line.trim().startsWith('Q: '))
+        .map(line => line.replace('Q: ', '').trim())
+        .filter(q => q.length > 10)
+        .slice(0, 5);
+      
+      return questions.length > 0 ? questions : this.createFallbackQuestions(query);
+    } catch (error) {
+      console.error("Error generating contextual questions:", error);
+      return this.createFallbackQuestions(query);
+    }
+  }
+
+  // Extract validated statistics
+  private async extractValidatedStatistics(documents: Document[], query: string): Promise<Statistic[]> {
+    try {
+      const statsPrompt = `
+        Extract numerical data and statistics from this research about: ${query}
+        
+        Content:
+        ${documents.map(doc => doc.pageContent.substring(0, 500)).join('\n\n')}
+        
+        Find 3-5 specific statistics, metrics, or numerical facts.
+        
+        For each statistic:
+        STAT_START
+        METRIC: [What is being measured]
+        VALUE: [The numerical value with units]
+        CONTEXT: [Why this number is significant]
+        SOURCE: [Where this data comes from]
+        STAT_END
+        
+        Only include verifiable, specific numbers. Avoid vague estimates.
+      `;
+      
+      const response = await this.model.invoke(statsPrompt);
+      const responseText = response.content.toString();
+      
+      return this.parseStructuredStatistics(responseText);
+    } catch (error) {
+      console.error("Error extracting validated statistics:", error);
+      return [];
+    }
+  }
+
+  // Parse structured statistics
+  private parseStructuredStatistics(text: string): Statistic[] {
+    const statistics: Statistic[] = [];
+    const statBlocks = text.split('STAT_START').slice(1);
+    
+    for (const block of statBlocks) {
+      const endIndex = block.indexOf('STAT_END');
+      const content = endIndex > -1 ? block.substring(0, endIndex) : block;
+      
+      const metricMatch = content.match(/METRIC:\s*(.+?)(?=\n|VALUE:)/s);
+      const valueMatch = content.match(/VALUE:\s*(.+?)(?=\n|CONTEXT:)/s);
+      const contextMatch = content.match(/CONTEXT:\s*(.+?)(?=\n|SOURCE:)/s);
+      const sourceMatch = content.match(/SOURCE:\s*(.+?)(?=\n|$)/s);
+      
+      if (metricMatch && valueMatch && this.isValidStatistic(valueMatch[1])) {
+        statistics.push({
+          metric: metricMatch[1].trim(),
+          value: valueMatch[1].trim(),
+          context: contextMatch?.[1]?.trim() || 'Statistical data',
+          source: sourceMatch?.[1]?.trim() || 'Research data'
+        });
       }
     }
-
-    // Validate metadata
-    if (
-      typeof typedResponse.metadata !== 'object' ||
-      typeof typedResponse.metadata.sourcesCount !== 'number' ||
-      typeof typedResponse.metadata.confidence !== 'number' ||
-      typeof typedResponse.metadata.researchDepth !== 'string'
-    ) {
-      console.warn('Invalid metadata');
-      return false;
-    }
-
-    return true;
+    
+    return statistics;
   }
 
+  // Validate if a value is a proper statistic
+  private isValidStatistic(value: string): boolean {
+    // Check if value contains numbers and reasonable units
+    const hasNumber = /\d/.test(value);
+    const hasReasonableLength = value.length < 100;
+    const notJustText = !/^[a-zA-Z\s]+$/.test(value);
+    
+    return hasNumber && hasReasonableLength && notJustText;
+  }
+
+  // Calculate confidence score
+  private calculateConfidence(docs: Document[], findings: Finding[]): number {
+    let confidence = 0.5; // Base confidence
+    
+    // Boost for number of sources
+    confidence += Math.min(docs.length * 0.05, 0.3);
+    
+    // Boost for authoritative sources
+    const authSources = docs.filter(doc => 
+      doc.metadata.source && this.isAuthoritativeDomain(this.extractDomain(doc.metadata.source))
+    ).length;
+    confidence += authSources * 0.1;
+    
+    // Boost for number of findings
+    confidence += Math.min(findings.length * 0.05, 0.2);
+    
+    return Math.min(confidence, 1.0);
+  }
+
+  // Calculate quality score
+  private calculateQualityScore(docs: Document[]): number {
+    if (docs.length === 0) return 0;
+    
+    const avgLength = docs.reduce((sum, doc) => sum + doc.pageContent.length, 0) / docs.length;
+    const authoritativeCount = docs.filter(doc => 
+      doc.metadata.source && this.isAuthoritativeDomain(this.extractDomain(doc.metadata.source))
+    ).length;
+    
+    let score = 0.5;
+    score += Math.min(avgLength / 2000, 0.3); // Content length factor
+    score += (authoritativeCount / docs.length) * 0.2; // Authority factor
+    
+    return Math.min(score, 1.0);
+  }
+
+  // Extract keywords from query
+  private extractKeywords(query: string): string[] {
+    const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'how', 'what', 'when', 'where', 'why']);
+    
+    return query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !stopWords.has(word))
+      .slice(0, 5);
+  }
+
+  // Helper methods for fallbacks
+  private createFallbackFindings(query: string): Finding[] {
+    return [{
+      title: "Research Topic Overview",
+      content: `This research focuses on ${query} and related concepts. The analysis covers current developments and key aspects of this topic.`,
+      source: "Research analysis",
+      relevance: "High",
+      type: "Overview",
+      category: "General"
+    }];
+  }
+
+  private createFallbackCodeExamples(query: string): CodeExample[] {
+    const language = this.detectLanguageFromQuery(query);
+    return [{
+      title: `Basic ${language} Example`,
+      language: language,
+      code: this.generateFallbackCode(query),
+      description: `A simple example demonstrating concepts related to ${query}`,
+      source: 'Generated example'
+    }];
+  }
+
+  private createFallbackQuestions(query: string): string[] {
+    return [
+      `What are the key components of ${query}?`,
+      `How can ${query} be implemented effectively?`,
+      `What are the best practices for ${query}?`,
+      `What are the latest developments in ${query}?`,
+      `How does ${query} compare to alternative approaches?`
+    ];
+  }
+
+  // ... existing methods (isProgrammingQuery, detectLanguageFromQuery, generateFallbackCode, etc.)
+  // Keep all the existing helper methods from the original file
+
+  private isProgrammingQuery(query: string): boolean {
+    const programmingKeywords = [
+      'code', 'program', 'function', 'algorithm', 'develop', 'software',
+      'app', 'application', 'website', 'web', 'javascript', 'python', 'java',
+      'c++', 'programming', 'developer', 'development', 'script', 'library',
+      'framework', 'api', 'backend', 'frontend', 'fullstack', 'database',
+      'sql', 'nosql', 'react', 'angular', 'vue', 'node', 'express', 'django',
+      'flask', 'spring', 'boot', 'docker', 'kubernetes', 'devops', 'git',
+      'github', 'gitlab', 'bitbucket', 'ci/cd', 'continuous integration',
+      'deployment', 'testing', 'unit test', 'integration test', 'e2e test'
+    ];
+    
+    const queryLower = query.toLowerCase();
+    return programmingKeywords.some(keyword => queryLower.includes(keyword));
+  }
+
+  private detectLanguageFromQuery(query: string): string {
+    const queryLower = query.toLowerCase();
+    
+    if (queryLower.includes('python') || queryLower.includes('django') || queryLower.includes('flask')) {
+      return 'python';
+    } else if (queryLower.includes('javascript') || queryLower.includes('js') || queryLower.includes('node')) {
+      return 'javascript';
+    } else if (queryLower.includes('java') || queryLower.includes('spring')) {
+      return 'java';
+    } else if (queryLower.includes('typescript') || queryLower.includes('ts')) {
+      return 'typescript';
+    } else {
+      return 'python'; // Default
+    }
+  }
+
+  private generateFallbackCode(query: string): string {
+    const language = this.detectLanguageFromQuery(query);
+    
+    switch (language) {
+      case 'python':
+        return `# Example implementation for ${query}
+def main():
+    """
+    A simple example demonstrating ${query}
+    """
+    print(f"Working with: ${query}")
+    
+    # Implementation would go here
+    result = process_data()
+    return result
+
+def process_data():
+    """Process data related to the query"""
+    return "Example result"
+
+if __name__ == "__main__":
+    main()`;
+      
+      case 'javascript':
+        return `// Example implementation for ${query}
+function main() {
+    /**
+     * A simple example demonstrating ${query}
+     */
+    console.log(\`Working with: ${query}\`);
+    
+    // Implementation would go here
+    const result = processData();
+    return result;
+}
+
+function processData() {
+    // Process data related to the query
+    return "Example result";
+}
+
+main();`;
+      
+      default:
+        return `// Example code for ${query}
+function example() {
+    console.log("This demonstrates ${query}");
+    return "result";
+}`;
+    }
+  }
+
+  // Enhanced fallback creation
+  private createEnhancedFallback(query: string, docs: Document[]) {
+    return {
+      summary: `Research analysis for "${query}" encountered technical limitations. This topic involves ${query} and related concepts that would benefit from further investigation with more specific search terms.`,
+      findings: this.createFallbackFindings(query),
+      codeExamples: this.isProgrammingQuery(query) ? this.createFallbackCodeExamples(query) : [],
+      suggestedQuestions: this.createFallbackQuestions(query),
+      statistics: [],
+      metadata: {
+        sourcesCount: docs.length,
+        confidence: 0.3,
+        researchDepth: "Limited",
+        lastUpdated: new Date().toISOString(),
+        searchQueries: 1,
+        qualityScore: 0.2,
+        error: true
+      }
+    };
+  }
+
+  // Keep existing API methods (try, researchWithStreaming, etc.) with minimal changes
   async try(request: Request) {
     try {
       const apiKey = request.headers.get('x-api-key');
@@ -770,159 +979,20 @@ export class ResearchAgent {
         );
       }
 
-      // Perform search
+      // Perform enhanced research
       const searchResults = await this.research(query);
 
-      // First, get relevant images
-      const imageSearchResults = await this.research(`${query} relevant images diagrams infographics`);
-      
-      // Generate research response with a generic, comprehensive prompt
-      const response = await this.model.invoke(
-        `You are an expert research analyst. Provide a comprehensive analysis about: "${query}"
-        
-        Based on these search results: ${JSON.stringify(searchResults)}
+      // Update API usage
+      await supabase
+        .from('api_keys')
+        .update({ 
+          usage: (keyData.usage || 0) + 1,
+          last_used_at: new Date().toISOString()
+        })
+        .eq('id', keyData.id);
 
-        Important: Return a SINGLE-LINE JSON string with this structure:
-        {
-          "summary": {
-            "overview": "Start with a comprehensive overview paragraph that introduces the topic and its significance",
-            "currentState": "Provide a detailed paragraph about the current state of development, key players, and recent breakthroughs",
-            "impact": "Explain the broader impact and implications in a well-structured paragraph",
-            "futureOutlook": "Conclude with forward-looking insights and future developments in the field",
-            "keyTakeaways": [
-              "3-4 bullet points highlighting the most important takeaways",
-              "Each point should be concise but informative"
-            ]
-          },
-          "findings": [
-            {
-              "title": "Key Finding or Topic Area",
-              "content": "Detailed explanation with specific facts, figures, and expert insights. Include real data points, research findings, and concrete examples",
-              "source": "URL of authoritative source",
-              "relevance": "High/Medium/Low",
-              "credibility": 0.9,
-              "type": "text",
-              "category": "Choose relevant category (e.g., Technology, Research, Market Analysis, Scientific Finding, etc.)"
-            }
-          ],
-          "keyInsights": [
-            {
-              "point": "Significant insight or trend",
-              "explanation": "Detailed analysis of importance and implications",
-              "supportingEvidence": [
-                "Include specific data points",
-                "Reference expert opinions",
-                "Add relevant statistics",
-                "Cite research findings"
-              ]
-            }
-          ],
-          "statistics": [
-            {
-              "value": "Specific numerical data",
-              "metric": "What this number measures",
-              "context": "Why this statistic is important",
-              "source": "Source of the data"
-            }
-          ],
-          "suggestedQuestions": [
-            // Include 4-5 specific follow-up questions that would help explore:
-            // - Deeper technical aspects
-            // - Comparative analysis
-            // - Future implications
-            // - Practical applications
-            // - Related developments
-            // Make questions natural and contextual to the research
-          ],
-          "metadata": {
-            "sourcesCount": Number of unique sources used,
-            "confidence": Confidence score between 0 and 1,
-            "researchDepth": "comprehensive",
-            "lastUpdated": "${new Date().toISOString()}"
-          }
-        }
+      return NextResponse.json({ research: searchResults });
 
-        Guidelines:
-        1. Focus on factual, verifiable information
-        2. Include diverse perspectives and sources
-        3. Provide specific examples and case studies
-        4. Add relevant statistics and data points
-        5. Cite authoritative sources
-        6. Cover recent developments and future implications
-        7. Maintain objectivity in analysis`
-      );
-
-      // Clean and parse the response
-      let cleanedResponse = response.content as string;
-      
-      // Remove any markdown code blocks
-      if (cleanedResponse.includes('```')) {
-        cleanedResponse = cleanedResponse.replace(/```json\n|```/g, '');
-      }
-
-      // Sanitize the JSON string
-      cleanedResponse = sanitizeJsonString(cleanedResponse);
-
-      try {
-        // Parse the cleaned response
-        const research = JSON.parse(cleanedResponse);
-
-        // Add relevant images
-        if (imageSearchResults && Array.isArray(imageSearchResults)) {
-          const relevantImages = imageSearchResults
-            .filter(item => 
-              item.url && 
-              (item.url.match(/\.(jpg|jpeg|png|gif)$/i) || 
-               item.url.includes('images') ||
-               item.url.includes('media'))
-            )
-            .slice(0, 5)
-            .map(item => ({
-              type: "image",
-              url: item.url,
-              caption: sanitizeJsonString(item.title || "Related visual content"),
-              source: item.source || item.url
-            }));
-
-          research.visualData = research.visualData || [];
-          research.visualData.push(...relevantImages);
-        }
-
-        // Update API usage
-        await supabase
-          .from('api_keys')
-          .update({ 
-            usage: (keyData.usage || 0) + 1,
-            last_used_at: new Date().toISOString()
-          })
-          .eq('id', keyData.id);
-
-        // Then in the sanitization, combine the summary sections
-        if (research.summary && typeof research.summary === 'object') {
-          research.summary = [
-            research.summary.overview,
-            research.summary.currentState,
-            research.summary.impact,
-            research.summary.futureOutlook,
-            '',
-            'Key Takeaways:',
-            ...research.summary.keyTakeaways.map((point: string) => `• ${point}`)
-          ].join('\n\n');
-        }
-
-        return NextResponse.json({ research });
-
-      } catch (parseError) {
-        console.error('JSON Parse Error:', parseError);
-        console.log('Raw Response:', cleanedResponse);
-        
-        // Return a more structured error response
-        return NextResponse.json({
-          message: 'Failed to parse research results',
-          error: parseError instanceof Error ? parseError.message : 'Unknown parsing error',
-          rawResponse: cleanedResponse.slice(0, 200) + '...' // First 200 chars for debugging
-        }, { status: 500 });
-      }
     } catch (error) {
       console.error('Research error:', error);
       return NextResponse.json(
@@ -932,534 +1002,35 @@ export class ResearchAgent {
     }
   }
 
-  // Improve the extractJSON method to handle malformed JSON
-  private extractJSON(text: string): unknown[] {
+  // Streaming research method
+  async researchWithStreaming(query: string, statusCallback: (status: ResearchStatus) => void) {
+    this.lastQuery = query;
+    
     try {
-      // First try to parse the entire text as JSON
-      try {
-        return JSON.parse(text) as unknown[];
-      } catch {
-        // Not valid JSON, continue with extraction
-      }
-
-      // Look for JSON array or object patterns
-      const jsonRegex = /(\[[\s\S]*\]|\{[\s\S]*\})/g;
-      const matches = text.match(jsonRegex);
+      statusCallback({
+        stage: 'searching',
+        message: 'Performing enhanced search...',
+        progress: { current: 1, total: 5 }
+      });
       
-      if (matches && matches.length > 0) {
-        // Try each potential JSON match
-        for (const match of matches) {
-          try {
-            // Clean the JSON string before parsing
-            const cleanedJson = this.cleanJsonString(match);
-            const parsed = JSON.parse(cleanedJson);
-            return parsed;
-          } catch (e: unknown) {
-            const error = e as Error;
-            console.log(`Failed to parse potential JSON match: ${error.message}`);
-          }
-        }
-      }
+      const result = await this.research(query);
       
-      // If we reach here, try to extract JSON between markers
-      const start = text.indexOf('[');
-      const end = text.lastIndexOf(']') + 1;
+      statusCallback({
+        stage: 'complete',
+        message: 'Enhanced research complete!',
+        progress: { current: 5, total: 5 }
+      });
       
-      if (start !== -1 && end !== -1 && start < end) {
-        try {
-          const jsonStr = text.substring(start, end);
-          const cleanedJson = this.cleanJsonString(jsonStr);
-          const parsed = JSON.parse(cleanedJson);
-          return Array.isArray(parsed) ? parsed : [parsed];
-        } catch (e: unknown) {
-          const error = e as Error;
-          console.log(`Failed to parse JSON between brackets: ${error.message}`);
-        }
-      }
-      
-      // Try with curly braces if brackets didn't work
-      const objStart = text.indexOf('{');
-      const objEnd = text.lastIndexOf('}') + 1;
-      
-      if (objStart !== -1 && objEnd !== -1 && objStart < objEnd) {
-        try {
-          const jsonStr = text.substring(objStart, objEnd);
-          const cleanedJson = this.cleanJsonString(jsonStr);
-          const parsed = JSON.parse(cleanedJson);
-          return Array.isArray(parsed) ? parsed : [parsed];
-        } catch (e: unknown) {
-          const error = e as Error;
-          console.log(`Failed to parse JSON between braces: ${error.message}`);
-        }
-      }
-      
-      // If all else fails, return an empty array
-      console.log("Could not extract valid JSON, returning empty array");
-      return [];
+      return result;
     } catch (error) {
-      console.error("Error in extractJSON:", error);
-      return [];
-    }
-  }
-
-  // Improve the cleanJsonString method to handle more edge cases
-  private cleanJsonString(str: string): string {
-    try {
-      // First, check if we're dealing with code blocks inside JSON
-      // This is a common issue when the model includes code examples
-      str = str.replace(/```[a-z]*\n([\s\S]*?)```/g, function(match, codeContent) {
-        // Escape the code content properly for JSON
-        return JSON.stringify(codeContent);
+      console.error("Streaming research error:", error);
+      statusCallback({
+        stage: 'complete',
+        message: 'Research encountered an error',
+        progress: { current: 5, total: 5 }
       });
       
-      // Handle triple quotes in a similar way
-      str = str.replace(/'''[a-z]*\n?([\s\S]*?)'''/g, function(match, codeContent) {
-        return JSON.stringify(codeContent);
-      });
-      
-      // Remove any trailing commas in arrays or objects
-      str = str.replace(/,\s*([\]}])/g, '$1');
-      
-      // Fix unquoted property names
-      str = str.replace(/(\{|\,)\s*([a-zA-Z0-9_]+)\s*\:/g, '$1"$2":');
-      
-      // Fix single quotes to double quotes, but be careful with already escaped quotes
-      str = str.replace(/(\w+)\'(\w+)/g, '$1\\\'$2'); // Escape any apostrophes in words first
-      str = str.replace(/'/g, '"');
-      
-      // Remove any control characters
-      str = str.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-      
-      // Fix any missing quotes around string values
-      str = str.replace(/:\s*([a-zA-Z][a-zA-Z0-9_]*)\s*(,|})/g, ':"$1"$2');
-      
-      // Fix common issues with code examples in JSON
-      str = str.replace(/"code"\s*:\s*"([^"]*?)\\n/g, '"code": "');
-      
-      // Handle nested quotes in descriptions or other text fields
-      str = str.replace(/"([^"]*?)\"([^"]*?)\"([^"]*?)"/g, '"$1\\\"$2\\\"$3"');
-      
-      // Fix issues with backslashes in code
-      str = str.replace(/\\\\/g, '\\\\\\\\');
-      
-      // Try to validate and fix the JSON structure
-      try {
-        // If it's valid JSON already, just return it
-        JSON.parse(str);
-        return str;
-      } catch  {
-        // If not valid, try more aggressive fixes
-        
-        // Check for unclosed brackets or braces
-        const openBrackets = (str.match(/\[/g) || []).length;
-        const closeBrackets = (str.match(/\]/g) || []).length;
-        const openBraces = (str.match(/\{/g) || []).length;
-        const closeBraces = (str.match(/\}/g) || []).length;
-        
-        // Add missing closing brackets/braces
-        if (openBrackets > closeBrackets) {
-          str += ']'.repeat(openBrackets - closeBrackets);
-        }
-        
-        if (openBraces > closeBraces) {
-          str += '}'.repeat(openBraces - closeBraces);
-        }
-        
-        // Try to parse again after fixes
-        try {
-          JSON.parse(str);
-          return str;
-        } catch  {
-          // If still not valid, log the issue and return the best we can
-          console.log("Could not fix JSON structure:");
-          return str;
-        }
-      }
-    } catch (e) {
-      console.error("Error cleaning JSON string:", e);
-      return str; // Return original if cleaning fails
-    }
-  }
-
-  // Helper to check if query is programming-related
-  private isProgrammingQuery(query: string): boolean {
-    const programmingKeywords = [
-      'code', 'algorithm', 'programming', 'function', 'class', 
-      'javascript', 'python', 'java', 'c++', 'typescript',
-      'implementation', 'coding', 'software', 'developer'
-    ];
-    return programmingKeywords.some(keyword => 
-      query.toLowerCase().includes(keyword)
-    );
-  }
-
-  // Create fallback code examples
-  private createFallbackCodeExamples(query: string): CodeExample[] {
-    // Determine likely language based on query
-    let language = 'python';
-    if (query.toLowerCase().includes('javascript') || query.toLowerCase().includes('js')) {
-      language = 'javascript';
-    } else if (query.toLowerCase().includes('python')) {
-      language = 'python';
-    }
-    
-    if (language === 'python') {
-      return [{
-        title: "Basic Implementation",
-        language: "python",
-        code: "def example():\n    # This demonstrates the concept\n    print('Implementation example')\n\nexample()",
-        description: "A simple Python implementation related to the query"
-      }];
-    } else {
-      return [{
-        title: "Basic Implementation",
-        language: "javascript",
-        code: "function example() {\n    // This demonstrates the concept\n    console.log('Implementation example');\n}\n\nexample();",
-        description: "A simple JavaScript implementation related to the query"
-      }];
-    }
-  }
-
-  // Add a method to extract code blocks from text content
-  private extractCodeBlocks(text: string): CodeBlock[] {
-    if (!text) return [];
-    
-    const codeBlocks: CodeBlock[] = [];
-    
-    try {
-      // Match code blocks with triple backticks
-      const tripleBacktickRegex = /```(?:(\w+)\s*)?\n?([\s\S]*?)```/g;
-      let match;
-      
-      while ((match = tripleBacktickRegex.exec(text)) !== null) {
-        const language = match[1]?.trim() || 'text';
-        const code = match[2]?.trim();
-        if (code && code.length > 0) {
-          codeBlocks.push({ language, code });
-        }
-      }
-      
-      // Match code blocks with triple quotes
-      const tripleQuoteRegex = /'''(?:(\w+)\s*)?\n?([\s\S]*?)'''/g;
-      while ((match = tripleQuoteRegex.exec(text)) !== null) {
-        const language = match[1]?.trim() || 'text';
-        const code = match[2]?.trim();
-        if (code && code.length > 0) {
-          codeBlocks.push({ language, code });
-        }
-      }
-      
-      // Match language-specific patterns
-      const languagePatterns = [
-        // Python function or class definition
-        { regex: /\b(def|class)\s+\w+[\s\(][^{]*?:/g, language: 'python' },
-        // JavaScript/TypeScript function or class
-        { regex: /\b(function|class|const|let|var)\s+\w+[\s\=\(][^{]*?\{/g, language: 'javascript' },
-        // Java/C# class or method
-        { regex: /\b(public|private|protected|class)\s+\w+[\s\<\(][^{]*?\{/g, language: 'java' }
-      ];
-      
-      for (const pattern of languagePatterns) {
-        const codeRegex = new RegExp(`(${pattern.regex.source}[\\s\\S]{20,500}?)(?=\\n\\n|$)`, 'g');
-        while ((match = codeRegex.exec(text)) !== null) {
-          const code = match[1]?.trim();
-          if (code && code.length > 30 && code.includes('\n')) {
-            codeBlocks.push({ language: pattern.language, code });
-          }
-        }
-      }
-      
-      // Detect language from content if not specified
-      return codeBlocks.map(block => {
-        if (!block.language || block.language === 'text') {
-          block.language = this.detectLanguage(block.code);
-        }
-        return block;
-      });
-    } catch (error) {
-      console.error("Error extracting code blocks:", error);
-      return [];
-    }
-  }
-
-  // Helper to detect programming language from code content
-  private detectLanguage(code: string): string {
-    // Simple language detection based on keywords and syntax
-    if (code.includes('import numpy') || code.includes('import pandas') || 
-        code.includes('def ') || code.includes('print(')) {
-      return 'python';
-    } else if (code.includes('function') || code.includes('const ') || 
-              code.includes('let ') || code.includes('var ') || 
-              code.includes('console.log')) {
-      return 'javascript';
-    } else if (code.includes('public class') || code.includes('System.out.println')) {
-      return 'java';
-    } else if (code.includes('#include') || code.includes('int main')) {
-      return 'cpp';
-    } else if (code.includes('<?php')) {
-      return 'php';
-    } else if (code.includes('<html>') || code.includes('<div>')) {
-      return 'html';
-    } else if (code.includes('SELECT') && code.includes('FROM')) {
-      return 'sql';
-    }
-    
-    return 'text';
-  }
-
-  // Enhance the research agent to extract statistics from the research data
-  private extractStatistics(docs: Document[], query: string): Array<{
-    value: string;
-    metric: string;
-    context: string;
-    source: string;
-  }> {
-    const statistics = [];
-    
-    // Regular expressions to find numerical data
-    const numberRegex = /\b\d+(\.\d+)?\s*(%|percent|million|billion|trillion|thousand|k|m|b|t)?\b/gi;
-    const dateRegex = /\b(19|20)\d{2}\b/g; // Years like 1990, 2023
-    
-    // Keywords that might indicate important statistics
-    const statKeywords = [
-      'rate', 'percentage', 'average', 'median', 'total', 'growth', 
-      'increase', 'decrease', 'revenue', 'users', 'population', 'market share'
-    ];
-    
-    // Process each document
-    for (const doc of docs) {
-      const content = doc.pageContent;
-      const source = doc.metadata.source || 'Research data';
-      
-      // Find sentences containing numbers
-      const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
-      
-      for (const sentence of sentences) {
-        // Check if sentence contains numbers
-        const hasNumber = numberRegex.test(sentence) || dateRegex.test(sentence);
-        
-        if (hasNumber) {
-          // Reset regex lastIndex
-          numberRegex.lastIndex = 0;
-          
-          // Check if sentence is relevant to the query
-          const isRelevant = query.toLowerCase().split(' ').some(word => 
-            word.length > 3 && sentence.toLowerCase().includes(word)
-          );
-          
-          // Check if sentence contains statistical keywords
-          const hasStatKeyword = statKeywords.some(keyword => 
-            sentence.toLowerCase().includes(keyword)
-          );
-          
-          if (isRelevant || hasStatKeyword) {
-            // Extract the number
-            numberRegex.lastIndex = 0;
-            const match = numberRegex.exec(sentence);
-            
-            if (match) {
-              const value = match[0];
-              
-              // Try to determine what this statistic measures
-              const words = sentence.split(' ');
-              const valueIndex = words.findIndex(w => w.includes(value));
-              
-              // Look for context words after the number
-              let metric = '';
-              if (valueIndex >= 0 && valueIndex < words.length - 1) {
-                metric = words.slice(valueIndex + 1, valueIndex + 4).join(' ');
-              }
-              
-              // If no context found after, look before
-              if (!metric && valueIndex > 0) {
-                metric = words.slice(Math.max(0, valueIndex - 3), valueIndex).join(' ');
-              }
-              
-              statistics.push({
-                value,
-                metric: metric || 'measurement',
-                context: sentence.trim(),
-                source
-              });
-              
-              // Limit to 10 statistics
-              if (statistics.length >= 10) break;
-            }
-          }
-        }
-      }
-    }
-    
-    return statistics;
-  }
-
-  // Add a new method to extract code examples directly from the model's response
-  private extractCodeExamplesFromResponse(text: string): CodeExample[] {
-    try {
-      // First try to extract code blocks
-      const codeBlocks = this.extractCodeBlocks(text);
-      
-      if (codeBlocks.length > 0) {
-        // Convert code blocks to code examples
-        return codeBlocks.map((block, index) => ({
-          title: `Example ${index + 1}`,
-          language: block.language,
-          code: block.code,
-          description: `Code example extracted from research data`,
-          source: "Research data"
-        }));
-      }
-      
-      // If no code blocks found, try to extract from JSON-like structures
-      const jsonMatches = text.match(/\{[\s\S]*?\}/g) || [];
-      
-      for (const match of jsonMatches) {
-        try {
-          const cleaned = this.cleanJsonString(match);
-          const parsed = JSON.parse(cleaned);
-          
-          if (parsed.code && parsed.language) {
-            return [{
-              title: parsed.title || "Code Example",
-              language: parsed.language,
-              code: parsed.code,
-              description: parsed.description || "Extracted code example",
-              source: parsed.source || "Research data"
-            }];
-          }
-        } catch  {
-          // Continue to next match
-        }
-      }
-      
-      return [];
-    } catch (e) {
-      console.error("Error extracting code examples from response:", e);
-      return [];
-    }
-  }
-
-  // Update the method to handle different content types
-  private extractCodeExamplesFromTemplate(content: string | MessageContent): CodeExample[] {
-    // Convert content to string if it's not already
-    const text = typeof content === 'string' 
-      ? content 
-      : Array.isArray(content) 
-        ? content.map(item => {
-            if (typeof item === 'string') return item;
-            return (item as TextContent).text || (item as TextContent).content || '';
-          }).join('\n')
-        : ((content as TextContent)?.text || (content as TextContent)?.content || '');
-    
-    const examples: CodeExample[] = [];
-    
-    // Pattern to match the template format
-    const examplePattern = /EXAMPLE TITLE:\s*(.+?)\s*LANGUAGE:\s*(.+?)\s*```([\s\S]+?)```\s*DESCRIPTION:\s*(.+?)(?=EXAMPLE TITLE:|$)/gi;
-    
-    let match;
-    while ((match = examplePattern.exec(text)) !== null) {
-      try {
-        const title = match[1]?.trim() || "Code Example";
-        const languageDeclaration = match[2]?.trim() || "text";
-        const codeBlock = match[3];
-        const description = match[4]?.trim() || "Code example";
-        
-        // Extract the actual code and language
-        const codeLines = codeBlock.split('\n');
-        let language = languageDeclaration;
-        let code = codeBlock;
-        
-        // If the first line has a language specifier, extract it
-        if (codeLines[0].trim().match(/^[a-zA-Z0-9_]+$/)) {
-          language = codeLines[0].trim();
-          code = codeLines.slice(1).join('\n').trim();
-        }
-        
-        examples.push({
-          title,
-          language,
-          code,
-          description,
-          source: "Generated example"
-        });
-      } catch (error) {
-        console.warn("Error parsing code example template:", error);
-      }
-    }
-    
-    // If the template pattern didn't work, fall back to code block extraction
-    if (examples.length === 0) {
-      const codeBlocks = this.extractCodeBlocks(text);
-      
-      if (codeBlocks.length > 0) {
-        return codeBlocks.map((block, index) => ({
-          title: `Generated Example ${index + 1}`,
-          language: block.language,
-          code: block.code,
-          description: "Generated code example",
-          source: "Generated example"
-        }));
-      }
-    }
-    
-    return examples;
-  }
-
-  // Add this method to ensure code examples are relevant to the query
-  private ensureCodeRelevance(examples: CodeExample[], query: string): CodeExample[] {
-    // Extract key terms from the query
-    const queryTerms = query.toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .split(/\s+/)
-      .filter(term => term.length > 3 && !['what', 'how', 'when', 'where', 'which', 'code', 'example'].includes(term));
-    
-    if (queryTerms.length === 0) {
-      return examples; // No meaningful terms to filter by
-    }
-    
-    // Score examples by relevance
-    const scoredExamples = examples.map(example => {
-      const combinedText = `${example.title} ${example.description} ${example.code}`.toLowerCase();
-      
-      // Count how many query terms appear in the example
-      const matchCount = queryTerms.filter(term => combinedText.includes(term)).length;
-      
-      // Calculate a relevance score (0-1)
-      const relevanceScore = queryTerms.length > 0 ? matchCount / queryTerms.length : 0;
-      
-      return {
-        example,
-        relevanceScore
-      };
-    });
-    
-    // Sort by relevance score
-    scoredExamples.sort((a, b) => b.relevanceScore - a.relevanceScore);
-    
-    // Take the top 3 most relevant examples
-    return scoredExamples.slice(0, 3).map(item => item.example);
-  }
-
-  // Add timeout handling to your API calls with proper error typing
-  private async performResearch(query: string) {
-    try {
-      // Set a reasonable timeout for API calls
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
-      
-      // Use the signal in your API calls
-      const response = await this.model.invoke(query, {
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      return response;
-    } catch (error: unknown) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.log('Request timed out');
-        return { content: "The request took too long to process. Please try a more specific query." };
-      }
-      throw error;
+      return this.createEnhancedFallback(query, []);
     }
   }
 } 
