@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { ChartBarIcon, LinkIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
@@ -541,7 +541,7 @@ const ResearchResultView: React.FC<ResearchResultViewProps> = ({
   );
 };
 
-export default function ResearchAssistant() {
+const ResearchAssistant = () => {
   console.log('🚀 ResearchAssistant component mounting/re-rendering');
   
   const [query, setQuery] = useState('');
@@ -1451,4 +1451,22 @@ export default function ResearchAssistant() {
       <ToastContainer position="bottom-right" autoClose={3000} theme="colored" />
     </div>
   );
-}; 
+};
+
+// Suspense wrapper to fix useSearchParams deployment error
+const ResearchAssistantPage = () => {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading Research Assistant...</p>
+        </div>
+      </div>
+    }>
+      <ResearchAssistant />
+    </Suspense>
+  );
+};
+
+export default ResearchAssistantPage; 
